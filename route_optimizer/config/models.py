@@ -1,6 +1,11 @@
-class RouteConfig(object):
-    def __init__(self, graph_cache_dir="./graph_cache"):
-        self.graph_cache_dir = graph_cache_dir
+from dataclasses import dataclass
 
-    def __repr__(self):
-        return "RouteConfig(graph_cache_dir='{}')".format(self.graph_cache_dir)
+@dataclass(frozen=True)
+class RouteConfig:
+    """
+    Immutable configuration class for routing settings.
+
+    Attributes:
+        graph_cache_dir (str): Directory path to store or read cached graph data.
+    """
+    graph_cache_dir: str = "./graph_cache"
