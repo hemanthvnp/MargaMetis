@@ -519,10 +519,8 @@ of this software and associated documentation files (the "Software")...
 - **Hemanth Vasudev N P**: [@hemanthvnp](https://github.com/hemanthvnp)
 
 ### Get Help
-- 📖 [Documentation](https://docs.margametis.dev)
-- 💬 [Discord Community](https://discord.gg/margametis)
 - 🐛 [Issue Tracker](https://github.com/hemanthvnp/MargaMetis/issues)
-- 📧 [Email Support](mailto:support@margametis.dev)
+- 📧 [Email Support](mailto:hemantth06@outlook.com)
 
 ---
 
