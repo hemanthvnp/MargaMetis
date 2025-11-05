@@ -346,25 +346,15 @@ def haversine(lat1, lon1, lat2, lon2):
 For comprehensive documentation, visit: [docs.margametis.dev](https://docs.margametis.dev)
 
 ---
-
-## 🎮 Demo
-
-### Live Demo
-Try MārgaMetis online: [demo.margametis.dev](https://demo.margametis.dev)
-
-### Video Tutorial
-[![MārgaMetis Demo](https://img.youtube.com/vi/demo/0.jpg)](https://youtube.com/watch?v=demo)
-
 ### Screenshots
 
-**Route Comparison Dashboard**
-![Route Comparison](https://github.com/user-attachments/assets/a03991ea-24a8-47ae-a6c9-cf1a45137209)
-
 **Interactive Map Visualization**
-![Map View](https://github.com/user-attachments/assets/ab3afb21-e524-40c3-b682-c9865add81bf)
+<img width="1915" height="926" alt="image" src="https://github.com/user-attachments/assets/3998c888-085f-4d45-b478-6fcc2c1919d4" />
+(https://github.com/user-attachments/assets/ab3afb21-e524-40c3-b682-c9865add81bf)
 
 **Analytics Dashboard**
-![Analytics](https://github.com/user-attachments/assets/27de9492-0c9a-4a0a-b5a3-a3aec4bfb378)
+<img width="1685" height="175" alt="image" src="https://github.com/user-attachments/assets/4646d376-fa58-46c7-84af-e69410def975" />
+(https://github.com/user-attachments/assets/27de9492-0c9a-4a0a-b5a3-a3aec4bfb378)
 
 ---
 
@@ -501,7 +491,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ```
 MIT License
 
-Copyright (c) 2025 Keshika Murthy, Nidar, Hemanth Vasudev N P
+Copyright (c) 2025 Hemanth Vasudev N P
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software")...
