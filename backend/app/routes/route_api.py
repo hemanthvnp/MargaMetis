@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, session
 import logging
 import time
 from typing import Tuple
@@ -7,6 +7,7 @@ import osmnx as ox
 
 from route_optimizer.optimizer import RouteOptimizer
 from route_optimizer.utils.helpers import haversine_distance_m
+from app.models import db, User, SearchHistory
 
 logger = logging.getLogger(__name__)
 route_bp = Blueprint('routes', __name__)
@@ -49,6 +50,9 @@ def calculate_route():
         destination = data.get('destination', '').strip()
         origin_coords = data.get('origin_coords')
         dest_coords = data.get('dest_coords')
+        route_type = data.get('route_type', 'shortest')
+        time_of_day = int(data.get('time_of_day', 17))
+        vehicle_type = data.get('vehicle_type', 'car')
         
         # Validate inputs
         if not origin or not destination:
@@ -83,27 +87,27 @@ def calculate_route():
             optimizer_instance = get_optimizer()
             logger.info("Loading graph...")
             optimizer_instance.load_graph(center_point=mid_point, radius_m=graph_radius)
-            
-            logger.info("Calculating shortest route...")
+
+            logger.info(f"Calculating {route_type} route...")
             start_time = time.time()
-            result = optimizer_instance.find_shortest_route(origin_coords, dest_coords)
+            result = optimizer_instance.find_route(origin_coords, dest_coords, route_type, time_of_day, vehicle_type)
             duration = time.time() - start_time
-            
+
             # Get node coordinates for the path
             path_coords = []
-            for node in result.path:
+            for node in result["path"]:
                 node_data = optimizer_instance.graph.nodes[node]
                 path_coords.append({
                     'lat': node_data['y'],
                     'lon': node_data['x']
                 })
-            
-            return jsonify({
+
+            response_payload = {
                 'success': True,
-                'distance_km': round(result.distance_m / 1000, 2),
-                'distance_m': round(result.distance_m, 2),
+                'distance_km': round(result["distance_m"] / 1000, 2),
+                'distance_m': round(result["distance_m"], 2),
                 'calculation_time_s': round(duration, 3),
-                'path_nodes': len(result.path),
+                'path_nodes': len(result["path"]),
                 'origin': {
                     'name': origin,
                     'lat': origin_coords[0],
@@ -114,8 +118,39 @@ def calculate_route():
                     'lat': dest_coords[0],
                     'lon': dest_coords[1]
                 },
-                'path_coordinates': path_coords
-            }), 200
+                'path_coordinates': path_coords,
+                'traffic_prediction': result["traffic"],
+                'estimated_time_min': result["estimated_time_min"],
+                'best_hour': result["best_hour"],
+                'best_time_min': result["best_time_min"],
+                'route_type': route_type,
+                'vehicle_type': vehicle_type
+            }
+
+            # Log search into database
+            try:
+                username = session.get('username')
+                user_id = None
+                if username:
+                    user = User.query.filter_by(username=username).first()
+                    if user:
+                        user_id = user.id
+                record = SearchHistory(
+                    user_id=user_id,
+                    origin=origin,
+                    destination=destination,
+                    route_type=route_type,
+                    vehicle_type=vehicle_type,
+                    distance_m=response_payload['distance_m'],
+                    estimated_time_min=response_payload.get('estimated_time_min'),
+                    result_json=response_payload
+                )
+                db.session.add(record)
+                db.session.commit()
+            except Exception as log_err:
+                logger.warning(f"Failed to log search history: {log_err}")
+
+            return jsonify(response_payload), 200
             
         except Exception as e:
             logger.error(f"Error during route calculation: {str(e)}", exc_info=True)
