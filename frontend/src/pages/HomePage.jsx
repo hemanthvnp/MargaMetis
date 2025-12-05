@@ -8,9 +8,27 @@ import { routeService } from '../services/api';
 export const HomePage = () => {
   const [origin, setOrigin] = useState('');
   const [destination, setDestination] = useState('');
+  const [routeType, setRouteType] = useState('shortest');
+  const [vehicleType, setVehicleType] = useState('car');
   const [route, setRoute] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  useEffect(() => {
+    // Load selected route from localStorage if present
+    try {
+      const stored = localStorage.getItem('selectedRoute');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && parsed.success) {
+          setRoute(parsed);
+        }
+        localStorage.removeItem('selectedRoute');
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, []);
 
   const handleSearch = async () => {
     if (!origin.trim() || !destination.trim()) {
@@ -22,7 +40,7 @@ export const HomePage = () => {
     setError(null);
 
     try {
-      const result = await routeService.calculateRoute(origin, destination);
+      const result = await routeService.calculateRoute(origin, destination, null, null, routeType, undefined, vehicleType);
       if (result.success) {
         setRoute(result);
       } else {
@@ -44,8 +62,12 @@ export const HomePage = () => {
           <SearchBar
             origin={origin}
             destination={destination}
+            routeType={routeType}
+            vehicleType={vehicleType}
             onOriginChange={setOrigin}
             onDestinationChange={setDestination}
+            onRouteTypeChange={setRouteType}
+            onVehicleTypeChange={setVehicleType}
             onSearch={handleSearch}
             isLoading={isLoading}
           />

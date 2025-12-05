@@ -4,8 +4,12 @@ import { MapPin, Loader } from 'lucide-react';
 export const SearchBar = ({ 
   origin, 
   destination, 
+  routeType,
+  vehicleType,
   onOriginChange, 
   onDestinationChange, 
+  onRouteTypeChange,
+  onVehicleTypeChange,
   onSearch, 
   isLoading 
 }) => {
@@ -43,6 +47,36 @@ export const SearchBar = ({
             placeholder="Enter destination location (e.g., Prozone Mall, Coimbatore)"
             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
           />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Route Type</label>
+          <select
+            value={routeType}
+            onChange={(e) => onRouteTypeChange(e.target.value)}
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
+          >
+            <option value="shortest">Shortest</option>
+            <option value="cost">Cost Efficient</option>
+            <option value="fuel">Fuel Efficient</option>
+            <option value="green">Green</option>
+            <option value="traffic_free">Traffic Free</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Vehicle Type</label>
+          <select
+            value={vehicleType}
+            onChange={(e) => onVehicleTypeChange(e.target.value)}
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
+          >
+            <option value="car">Car</option>
+            <option value="bike">Bike</option>
+            <option value="bus">Bus</option>
+            <option value="truck">Truck</option>
+            <option value="auto">Auto</option>
+          </select>
         </div>
 
         <button

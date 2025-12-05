@@ -2,6 +2,7 @@ import React from 'react';
 import { Clock, Navigation, MapPin } from 'lucide-react';
 
 export const RouteDetails = ({ route }) => {
+    const vehicleTypeLabel = route.vehicle_type ? route.vehicle_type.charAt(0).toUpperCase() + route.vehicle_type.slice(1) : 'Car';
   if (!route) return null;
 
   return (
@@ -32,7 +33,7 @@ export const RouteDetails = ({ route }) => {
           <p className="text-3xl font-bold text-green-600">
             {route.calculation_time_s} <span className="text-lg">s</span>
           </p>
-          <p className="text-sm text-gray-600 mt-1">milliseconds</p>
+          <p className="text-sm text-gray-600 mt-1">seconds</p>
         </div>
 
         {/* Path Nodes */}
@@ -46,7 +47,7 @@ export const RouteDetails = ({ route }) => {
         </div>
       </div>
 
-      {/* Route Summary */}
+      {/* Advanced Route Info */}
       <div className="mt-6 border-t pt-6">
         <h3 className="font-semibold text-gray-800 mb-3">Route Summary</h3>
         <div className="space-y-2">
@@ -64,6 +65,37 @@ export const RouteDetails = ({ route }) => {
               ({route.origin.lat.toFixed(4)}, {route.origin.lon.toFixed(4)}) →
               ({route.destination.lat.toFixed(4)}, {route.destination.lon.toFixed(4)})
             </span>
+          </div>
+        </div>
+
+        {/* Advanced Features */}
+        <div className="mt-6">
+          <h4 className="font-semibold text-gray-800 mb-2">Advanced Route Features</h4>
+          <div className="space-y-2">
+            <div className="flex justify-between items-center">
+              <span className="text-gray-600">Route Type:</span>
+              <span className="font-medium text-gray-800">{route.route_type?.replace('_', ' ') || 'Shortest'}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-600">Vehicle Type:</span>
+              <span className="font-medium text-gray-800">{vehicleTypeLabel}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-600">Estimated Travel Time:</span>
+              <span className="font-medium text-gray-800">{route.estimated_time_min} min</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-600">Best Hour (Least Traffic):</span>
+              <span className="font-medium text-gray-800">{route.best_hour}:00</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-600">Best Time (min):</span>
+              <span className="font-medium text-gray-800">{route.best_time_min} min</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-600">Traffic Prediction:</span>
+              <span className="text-sm text-gray-600">{route.traffic_prediction ? route.traffic_prediction.map((v, i) => `${v.toFixed(2)}` ).join(', ') : 'N/A'}</span>
+            </div>
           </div>
         </div>
       </div>

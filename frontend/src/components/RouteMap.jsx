@@ -12,23 +12,34 @@ L.Icon.Default.mergeOptions({
 });
 
 export const RouteMap = ({ origin, destination, pathCoordinates }) => {
-  // Calculate center point
-  let center = [51.505, -0.09]; // Default
-  let zoom = 13;
+  // Default center: India
+  let center = [22.9734, 78.6569]; // India lat/lon
+  let zoom = 5;
 
+  // Convert path coordinates to leaflet format
+  const polylinePoints = pathCoordinates?.map((coord) => [coord.lat, coord.lon]) || [];
+
+  // If route exists, fit bounds to route
+  const mapRef = React.useRef();
+  React.useEffect(() => {
+    if (mapRef.current && polylinePoints.length > 0) {
+      const bounds = L.latLngBounds(polylinePoints);
+      mapRef.current.fitBounds(bounds, { padding: [40, 40] });
+    }
+  }, [polylinePoints]);
+
+  // If searching, center between origin and destination
   if (origin && destination) {
     center = [
       (origin.lat + destination.lat) / 2,
       (origin.lon + destination.lon) / 2,
     ];
+    zoom = 12;
   }
-
-  // Convert path coordinates to leaflet format
-  const polylinePoints = pathCoordinates?.map((coord) => [coord.lat, coord.lon]) || [];
 
   return (
     <div className="w-full h-full rounded-lg overflow-hidden shadow-lg">
-      <MapContainer center={center} zoom={zoom} style={{ height: '100%', width: '100%' }}>
+      <MapContainer center={center} zoom={zoom} style={{ height: '100%', width: '100%' }} whenCreated={map => (mapRef.current = map)}>
         <TileLayer
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           attribution='&copy; OpenStreetMap contributors'
