@@ -62,6 +62,35 @@ class AStarPathfinder:
         return haversine_distance_m(lat_a, lon_a, lat_b, lon_b)
 
     def find_shortest_path(self, start_node: Any, end_node: Any) -> RouteResult:
+        # ...existing code...
+        # Standard A* using distance
+        return self._astar(start_node, end_node, weight="length")
+
+    def find_cost_efficient_path(self, start_node: Any, end_node: Any) -> RouteResult:
+        # Minimize toll cost (stub: use 'cost' edge attribute if present)
+        return self._astar(start_node, end_node, weight="cost")
+
+    def find_fuel_efficient_path(self, start_node: Any, end_node: Any) -> RouteResult:
+        # Minimize fuel usage (stub: use 'fuel' edge attribute if present)
+        return self._astar(start_node, end_node, weight="fuel")
+
+    def find_green_path(self, start_node: Any, end_node: Any) -> RouteResult:
+        # Minimize emissions (stub: use 'emissions' edge attribute if present)
+        return self._astar(start_node, end_node, weight="emissions")
+
+    def find_traffic_free_path(self, start_node: Any, end_node: Any) -> RouteResult:
+        # Avoid congested roads (stub: use 'traffic' edge attribute if present)
+        return self._astar(start_node, end_node, weight="traffic")
+
+    def _astar(self, start_node: Any, end_node: Any, weight: str = "length") -> RouteResult:
+        # Use NetworkX astar_path with custom weight
+        try:
+            path = nx.astar_path(self.graph, start_node, end_node, heuristic=lambda a, b: self._heuristic(a, b), weight=weight)
+            total_distance = sum(self.graph.edges[path[i], path[i+1], 0].get(weight, 1.0) for i in range(len(path)-1))
+            return RouteResult(path, total_distance)
+        except Exception as e:
+            self.logger.error(f"A* failed: {e}")
+            raise
         """
         Find the shortest path from start_node to end_node using A*.
 
