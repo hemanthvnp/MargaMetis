@@ -39,3 +39,32 @@ class TestGraphEngineTrivialRoute:
         result = engine.astar(1, 3)
         assert result["path"] == [1, 2, 3]
         assert result["distance"] == pytest.approx(1000.0)
+
+    def test_yen_k_shortest_wired_and_callable(self, tiny_graph):
+        # Just the wiring: on a single-path 3-node line, k=3 can only ever
+        # surface the one path -- this is a liveness check, not a diversity one.
+        engine = GraphEngine(tiny_graph)
+        routes = engine.yen_k_shortest(1, 3, k=3)
+        assert len(routes) == 1
+        assert routes[0]["path"] == [1, 2, 3]
+
+
+class TestSmartRouteWired:
+    def test_smart_route_endpoint_does_not_500(self, monkeypatch, client, tiny_graph):
+        from app.routes import route_api
+        from route_optimizer.optimizer import RouteOptimizer
+
+        monkeypatch.setattr(route_api, "optimizer", None)
+        monkeypatch.setattr(RouteOptimizer, "load_graph",
+                             lambda self, center_point, radius_m: setattr(self, "graph", tiny_graph))
+        monkeypatch.setattr(
+            route_api.ox, "geocode",
+            lambda q: (13.08, 80.27) if "origin" in q.lower() else (13.10, 80.29),
+        )
+
+        resp = client.post("/api/route/smart", json={
+            "query": "fastest route",
+            "origin": "Origin Place", "destination": "Destination Place",
+        })
+        assert resp.status_code == 200
+        assert resp.get_json()["success"] is True

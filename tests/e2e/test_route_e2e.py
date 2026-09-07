@@ -52,3 +52,27 @@ class TestSmartRouteE2E:
         best = data["routes"][0]
         assert best["distance_m"] > 0
         assert best["eta_min"] > 0
+
+    def test_real_smart_route_via_yen_returns_valid_candidates(self, client):
+        # No "via" waypoint -> the live /route/smart path runs Yen's K-Shortest
+        # against the real Chennai road graph. How many *distinct* candidates
+        # survive is topology-dependent -- RouteRanker._deduplicate() correctly
+        # collapses near-identical alternates (within 3% distance / 2%
+        # composite score), so this asserts validity/shape, not a fixed count.
+        resp = client.post("/api/route/smart", json={
+            "query": "fastest route",
+            "origin": _ORIGIN,
+            "destination": _DESTINATION,
+        })
+        assert resp.status_code == 200
+        data = resp.get_json()
+
+        routes = data["routes"]
+        assert len(routes) >= 1
+        assert len({r["route_id"] for r in routes}) == len(routes)
+        assert [r["rank"] for r in routes] == list(range(1, len(routes) + 1))
+        for r in routes:
+            assert r["distance_m"] > 0
+            assert r["eta_min"] > 0
+        if len(routes) > 1:
+            assert len({r["distance_m"] for r in routes}) == len(routes)

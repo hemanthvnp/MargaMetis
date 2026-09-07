@@ -33,7 +33,7 @@ RouteOptimizer
   └── route_optimizer/intelligence/
         ├── graph_engine.py     — Dijkstra / A* / Bidirectional A* / Yen's K-Shortest
         ├── cost_function.py    — (u, v, data) → float callable, injected at traversal
-        ├── constraint_engine.py — Groq LLaMA 3 NL → structured constraint JSON
+        ├── constraint_engine.py — Groq LLaMA 3 (via LiteLLM) NL → structured constraint JSON
         └── route_ranker.py     — multi-criteria scoring + one-sentence explanation
       │
       ▼
