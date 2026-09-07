@@ -120,6 +120,20 @@ class TestYenKShortest:
         routes = engine.yen_k_shortest(1, 6, k=3)
         assert math.isclose(routes[0]["distance"], shortest["distance"], rel_tol=1e-6)
 
+    def test_respects_custom_weight_fn(self, small_graph):
+        # By raw length, the top route through node 2/3 (the tolled motorway) wins.
+        # A cost function that heavily penalises tolls must push it out of first place.
+        engine = GraphEngine(small_graph)
+        baseline = engine.yen_k_shortest(1, 6, k=3)
+        assert 2 in baseline[0]["path"] and 3 in baseline[0]["path"]
+
+        def avoid_tolls(u, v, data):
+            length = float(data.get("length", 1.0))
+            return length * 1000.0 if data.get("toll") == "yes" else length
+
+        routed = engine.yen_k_shortest(1, 6, k=3, weight_fn=avoid_tolls)
+        assert not (2 in routed[0]["path"] and 3 in routed[0]["path"])
+
 
 class TestBenchmark:
     def test_benchmark_output_shape(self, small_graph):

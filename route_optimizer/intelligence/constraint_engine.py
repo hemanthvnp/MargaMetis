@@ -103,12 +103,12 @@ def _validate_and_fix(data: Dict[str, Any], raw_query: str) -> Dict[str, Any]:
     return data
 
 
-def _groq_extract(query: str, api_key: str) -> Optional[Dict[str, Any]]:
+def _llm_extract(query: str, api_key: str) -> Optional[Dict[str, Any]]:
     try:
-        from groq import Groq
-        client = Groq(api_key=api_key)
-        response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+        import litellm
+        response = litellm.completion(
+            model="groq/llama-3.1-8b-instant",
+            api_key=api_key,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user",   "content": query},
@@ -119,10 +119,10 @@ def _groq_extract(query: str, api_key: str) -> Optional[Dict[str, Any]]:
         )
         return json.loads(response.choices[0].message.content.strip())
     except ImportError:
-        logger.warning("groq not installed — pip install groq")
+        logger.warning("litellm not installed — pip install litellm")
         return None
     except (json.JSONDecodeError, Exception) as exc:
-        logger.warning(f"Groq extraction failed: {exc}")
+        logger.warning(f"LLM extraction failed: {exc}")
         return None
 
 
@@ -264,7 +264,7 @@ def extract_constraints(query: str, api_key: Optional[str] = None) -> Dict[str, 
 
     key = api_key or os.environ.get("GROQ_API_KEY")
     if key:
-        result = _groq_extract(query, key)
+        result = _llm_extract(query, key)
         if result is not None:
             return _validate_and_fix(result, query)
 

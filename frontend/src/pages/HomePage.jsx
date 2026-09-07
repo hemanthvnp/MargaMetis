@@ -15,6 +15,8 @@ export const HomePage = () => {
   const [route, setRoute]             = useState(null);
   const [isLoading, setIsLoading]     = useState(false);
   const [error, setError]             = useState(null);
+  const [smartResult, setSmartResult] = useState(null);   // full /route/smart response (all candidates)
+  const [activeIdx, setActiveIdx]     = useState(0);
 
   useEffect(() => {
     try {
@@ -27,6 +29,36 @@ export const HomePage = () => {
     } catch {}
   }, []);
 
+  // Builds the RouteDetails-shaped object for one candidate from a /route/smart response
+  const buildSmartRoute = (res, candidate) => ({
+    success: true,
+    cache_hit: false,
+    distance_km: parseFloat((candidate.distance_m / 1000).toFixed(2)),
+    distance_m: candidate.distance_m,
+    estimated_time_min: candidate.eta_min,
+    algorithm_time_ms: null,
+    nodes_explored: null,
+    path_nodes: candidate.path_coordinates?.length,
+    origin: res.origin,
+    destination: res.destination,
+    path_coordinates: candidate.path_coordinates,
+    route_type: 'smart',
+    vehicle_type: vehicleType,
+    // smart-specific fields
+    label: candidate.label,
+    explanation: candidate.explanation,
+    scores: candidate.score,
+    constraints: res.constraints,
+    cost_formula: res.cost_formula,
+    calculation_time_s: res.calculation_time_s,
+  });
+
+  const selectRoute = (idx) => {
+    if (!smartResult?.routes?.[idx]) return;
+    setActiveIdx(idx);
+    setRoute(buildSmartRoute(smartResult, smartResult.routes[idx]));
+  };
+
   const handleSearch = async () => {
     if (!origin.trim() || !destination.trim()) {
       setError('Please enter both origin and destination');
@@ -35,10 +67,12 @@ export const HomePage = () => {
     setIsLoading(true);
     setError(null);
     setRoute(null);
+    setSmartResult(null);
+    setActiveIdx(0);
 
     try {
       if (nlQuery.trim()) {
-        // NL pipeline — Groq extracts constraints, A* runs with dynamic cost fn
+        // NL pipeline — LLM extracts constraints, Yen's K-Shortest + A* run with the dynamic cost fn
         const res = await routeService.smartRoute({
           query: nlQuery,
           origin,
@@ -52,29 +86,8 @@ export const HomePage = () => {
           return;
         }
 
-        const best = res.routes[0];
-        setRoute({
-          success: true,
-          cache_hit: false,
-          distance_km: parseFloat((best.distance_m / 1000).toFixed(2)),
-          distance_m: best.distance_m,
-          estimated_time_min: best.eta_min,
-          algorithm_time_ms: null,
-          nodes_explored: null,
-          path_nodes: best.path_coordinates?.length,
-          origin: res.origin,
-          destination: res.destination,
-          path_coordinates: best.path_coordinates,
-          route_type: 'smart',
-          vehicle_type: vehicleType,
-          // smart-specific fields
-          label: best.label,
-          explanation: best.explanation,
-          scores: best.score,
-          constraints: res.constraints,
-          cost_formula: res.cost_formula,
-          calculation_time_s: res.calculation_time_s,
-        });
+        setSmartResult(res);
+        setRoute(buildSmartRoute(res, res.routes[0]));
       } else {
         const res = await routeService.calculateRoute(
           origin, destination, null, null, routeType, undefined, vehicleType
@@ -114,7 +127,28 @@ export const HomePage = () => {
 
         <div className="flex-1 overflow-y-auto">
           {route ? (
-            <div className="p-4">
+            <div className="p-4 space-y-3">
+              {smartResult?.routes?.length > 1 && (
+                <div className="flex flex-col gap-1.5">
+                  <p className="text-xs font-medium text-gray-400">
+                    {smartResult.routes.length} route options
+                  </p>
+                  {smartResult.routes.map((r, idx) => (
+                    <button
+                      key={r.route_id || idx}
+                      onClick={() => selectRoute(idx)}
+                      className={`text-left text-xs rounded-lg px-3 py-2 border transition-colors ${
+                        idx === activeIdx
+                          ? 'bg-blue-50 border-blue-200 text-blue-700'
+                          : 'bg-white border-gray-100 text-gray-500 hover:border-gray-200'
+                      }`}
+                    >
+                      <span className="font-semibold">#{r.rank} {r.label}</span>
+                      {' — '}{r.eta_min} min · {(r.distance_m / 1000).toFixed(1)} km · {r.semantic_class}
+                    </button>
+                  ))}
+                </div>
+              )}
               <RouteDetails route={route} />
             </div>
           ) : (
@@ -134,6 +168,8 @@ export const HomePage = () => {
           origin={route?.origin}
           destination={route?.destination}
           pathCoordinates={route?.path_coordinates}
+          routes={smartResult?.routes?.length > 1 ? smartResult.routes : null}
+          activeRouteIndex={activeIdx}
         />
       </div>
 

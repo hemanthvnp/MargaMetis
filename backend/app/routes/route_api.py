@@ -309,11 +309,20 @@ def smart_route():
                     raw = engine.astar(origin_node, dest_node, cost_fn)
             else:
                 raw = engine.astar(origin_node, dest_node, cost_fn)
+            routes = [raw] if (raw and raw.get("path")) else []
         else:
-            # No waypoints — single A* with cost function
-            raw = engine.astar(origin_node, dest_node, cost_fn)
+            # No waypoints — Yen's K-Shortest for up to 3 diverse route options
+            try:
+                max_routes = max(1, min(int(constraints.get("max_routes", 3) or 3), 3))
+            except (TypeError, ValueError):
+                max_routes = 3
 
-        routes = [raw] if (raw and raw.get("path")) else []
+            routes = engine.yen_k_shortest(origin_node, dest_node, k=max_routes, weight_fn=cost_fn) \
+                if max_routes > 1 else []
+
+            if not routes:
+                raw = engine.astar(origin_node, dest_node, cost_fn)
+                routes = [raw] if (raw and raw.get("path")) else []
 
         if not routes:
             return jsonify({"error": "No routes found between these locations"}), 400

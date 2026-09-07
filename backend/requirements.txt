@@ -15,5 +15,5 @@ pandas>=2.0.0
 scikit-learn>=1.3.0
 shapely>=2.0.0
 geopandas>=0.13.0
-groq>=0.9.0
+litellm>=1.0.0
 redis>=5.0.0
