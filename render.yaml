@@ -34,10 +34,12 @@ services:
         source: /*
         destination: /index.html
 
+  - type: redis
+    name: margametis-redis
+    plan: free
+    ipAllowList: []
+
 databases:
   - name: margametis-db
     databaseName: margametis
-    plan: free
-
-  - name: margametis-redis
     plan: free
