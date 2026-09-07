@@ -20,20 +20,6 @@ services:
       - key: GROQ_API_KEY
         sync: false
 
-  - type: web
-    name: margametis-frontend
-    runtime: static
-    rootDir: frontend
-    buildCommand: npm install --legacy-peer-deps && npm run build
-    staticPublishPath: dist
-    envVars:
-      - key: VITE_API_URL
-        sync: false
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
-
   - type: redis
     name: margametis-redis
     plan: free
