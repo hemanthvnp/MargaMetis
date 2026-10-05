@@ -1,10 +1,12 @@
 import secrets
+import logging
 from flask import Blueprint, request, jsonify, session
 
 from app import cache as redis_cache
 from .models import add_user, authenticate_user
 
 auth_bp = Blueprint('auth', __name__)
+logger = logging.getLogger(__name__)
 
 
 def _csrf_token() -> str:
@@ -15,39 +17,40 @@ def _csrf_token() -> str:
     return token
 
 
-def _csrf_is_valid(payload: dict | None) -> bool:
-    if not request.headers.get('Origin'):
-        return True
-    token = (payload or {}).get('csrf_token') or request.headers.get('X-CSRFToken')
-    if not token:
-        return False
-    return secrets.compare_digest(str(session.get('_csrf_token', '')), str(token))
-
-
 def _rate_limit_exceeded(key_prefix: str, limit: int = 5, window_seconds: int = 60) -> bool:
     r = redis_cache._redis()
     if r is None:
-        return False
+        raise RuntimeError('Authentication rate limiter is unavailable')
     bucket = f"auth:{key_prefix}:{request.remote_addr or 'unknown'}"
     try:
-        now = int(__import__('time').time())
-        pipe = r.pipeline()
-        pipe.incr(bucket)
-        pipe.expire(bucket, window_seconds)
-        result = pipe.execute()
-        return result[0] > limit
-    except Exception:
-        return False
+        count = r.incr(bucket)
+        if count == 1 and not r.expire(bucket, window_seconds):
+            raise RuntimeError('Could not set authentication rate-limit window')
+        return count > limit
+    except Exception as exc:
+        logger.exception('Authentication rate limiting failed')
+        raise RuntimeError('Authentication rate limiter failed') from exc
+
+
+def _rate_limit_response(key_prefix: str):
+    try:
+        if _rate_limit_exceeded(key_prefix):
+            label = 'registration' if key_prefix == 'register' else 'login'
+            return jsonify({
+                'error': f'Too many {label} attempts. Please wait a moment.'
+            }), 429
+    except RuntimeError:
+        return jsonify({'error': 'Authentication rate limiter is unavailable'}), 503
+    return None
 
 
 @auth_bp.route('/register', methods=['POST'])
 def register():
     data = request.get_json() or {}
 
-    if _rate_limit_exceeded('register'):
-        return jsonify({'error': 'Too many registration attempts. Please wait a moment.'}), 429
-    if request.headers.get('Origin') and not _csrf_is_valid(data):
-        return jsonify({'error': 'CSRF validation failed'}), 403
+    rate_limit_response = _rate_limit_response('register')
+    if rate_limit_response:
+        return rate_limit_response
 
     username = data.get('username')
     password = data.get('password')
@@ -70,10 +73,9 @@ def register():
 def login():
     data = request.get_json() or {}
 
-    if _rate_limit_exceeded('login'):
-        return jsonify({'error': 'Too many login attempts. Please wait a moment.'}), 429
-    if request.headers.get('Origin') and not _csrf_is_valid(data):
-        return jsonify({'error': 'CSRF validation failed'}), 403
+    rate_limit_response = _rate_limit_response('login')
+    if rate_limit_response:
+        return rate_limit_response
 
     username = data.get('username')
     password = data.get('password')
@@ -99,8 +101,6 @@ def login():
 
 @auth_bp.route('/logout', methods=['POST'])
 def logout():
-    if request.headers.get('Origin') and not _csrf_is_valid(request.get_json(silent=True) or {}):
-        return jsonify({'error': 'CSRF validation failed'}), 403
     session.clear()
     return jsonify({
         'success': True,

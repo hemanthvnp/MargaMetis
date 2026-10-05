@@ -29,7 +29,7 @@ Flask REST API  ──→  Redis  (geocode cache 24h, route cache 1h)
       │
       ▼
 RouteOptimizer
-  ├── GraphManager          — OSMnx graph download + GraphML disk cache
+  ├── GraphManager          — PostGIS spatial graph reads + OSMnx/GraphML fallback
   └── route_optimizer/intelligence/
         ├── graph_engine.py     — Dijkstra / A* / Bidirectional A* / Yen's K-Shortest
         ├── cost_function.py    — (u, v, data) → float callable, injected at traversal
@@ -37,7 +37,7 @@ RouteOptimizer
         └── route_ranker.py     — multi-criteria scoring + one-sentence explanation
       │
       ▼
-PostgreSQL  (user accounts, search history)
+PostgreSQL + PostGIS  (user accounts, search history, spatial road network)
 ```
 
 ## Route optimisation modes
@@ -75,21 +75,57 @@ Falls back to rule-based extraction when no API key is set.
 # optional: add free Groq key for NL constraint extraction
 echo "GROQ_API_KEY=gsk_..." > .env
 
-docker compose up -d
+docker compose up -d --build
 # → http://localhost:3030
 ```
 
-First search downloads the OSMnx graph (~20 s). All subsequent searches use the GraphML cache on disk and Redis route cache.
+The local Compose database is PostGIS. The backend applies Alembic migrations before Gunicorn starts. A direct non-Docker development run defaults to SQLite; SQLite supports non-spatial features and continues to load/download OSMnx GraphML graphs, while PostGIS-only spatial queries and analytics are unavailable.
+
+### Database migrations
+
+From `backend/`, apply schema migrations with:
+
+```bash
+flask --app wsgi db upgrade
+```
+
+To generate a migration after changing SQLAlchemy models:
+
+```bash
+flask --app wsgi db migrate -m "describe schema change"
+flask --app wsgi db upgrade
+```
+
+For an already-deployed database that has the pre-Alembic application schema, stamp the baseline once before the first upgraded deployment. Stamping records the existing schema version without recreating tables:
+
+```bash
+flask --app wsgi db stamp 20261005_0001
+```
+
+Do this only after confirming that the deployed tables match the baseline migration. New or empty databases should use `db upgrade` instead.
+
+### Spatial road network
+
+The PostGIS road store contains `osm_nodes` and `osm_edges`, with point/line geometries in SRID 4326, GiST geometry indexes, and btree topology indexes. Graph requests use a spatial bounding-box filter plus geography-distance filtering, then construct a request graph with OSM edge tags restored from `attrs`. Nearest-node lookup uses PostGIS geography `<->` ordering, restricted to nodes in the request graph, so the distance ordering is metric and respects longitude/latitude scale. Search history stores spatial origin/destination points with GiST indexes, backfilled from existing result coordinates; the admin spatial-analytics endpoint returns K-means cluster centers and heatmap-ready `[lat, lon, weight]` triples. When an area is missing, the backend uses an existing GraphML cache or the normal OSMnx/Overpass download path and persists the graph to PostGIS; PostGIS requests do not create one GraphML file per request.
+
+To seed the database from the baked Chennai graph and all cached graphs, first apply migrations, then run from the repository root:
+
+```powershell
+$env:DATABASE_URL = "postgresql+psycopg2://margametis:<password>@localhost:5432/margametis"
+python scripts/ingest_graphs.py
+```
+
+The ingestion is safe to rerun: OSM node IDs and `(u, v, key)` edges use `ON CONFLICT DO NOTHING`. If `chennai_central.graphml` is not present, the script reports that and ingests any `graph_cache/*.graphml` files it finds; it exits with an error if no graph inputs are available. Pass repeated `--graph <path>` options to ingest specific GraphML files.
 
 ## Stack
 
 | | Local | Production |
 |---|---|---|
 | Frontend | React 18, Vite, React-Leaflet, Tailwind CSS | Vercel |
-| Backend | Flask 3, SQLAlchemy, OSMnx 2, NetworkX 3, Gunicorn | Railway |
-| Cache | Redis 7 | Railway Redis |
-| Database | MySQL 8 | Railway PostgreSQL |
-| Deployment | Docker Compose — 4 services | Railway + Vercel |
+| Backend | Flask 3, SQLAlchemy, OSMnx 2, NetworkX 3, Gunicorn | Render |
+| Cache | Redis 7 | Render Redis |
+| Database | PostGIS 16 | Render PostgreSQL |
+| Deployment | Docker Compose — 4 services | Render + Vercel |
 
 ## Tests
 
@@ -119,7 +155,7 @@ MargaMetis/
 │   │   ├── cost_function.py     ← dynamic cost callable
 │   │   ├── constraint_engine.py ← Groq LLM + rule-based fallback
 │   │   └── route_ranker.py      ← label + explanation
-│   ├── graph/manager.py         ← OSMnx + GraphML cache
+│   ├── graph/manager.py         ← PostGIS spatial reads + download/cache fallback
 │   └── optimizer.py
 ├── backend/
 │   └── app/
@@ -133,6 +169,7 @@ MargaMetis/
 │   ├── unit/ smoke/ integration/ spec/ e2e/
 │   └── conftest.py               ← shared fixtures (synthetic graph, Flask client, Redis check)
 ├── scripts/run_benchmark.py      ← regenerates benchmarks/results_*.json (the numbers above)
+├── scripts/ingest_graphs.py     ← idempotent GraphML → PostGIS import
 ├── benchmarks/results_*.json
 ├── docker-compose.yml
 └── render.yaml / railway.toml

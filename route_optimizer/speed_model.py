@@ -71,5 +71,18 @@ def estimate_eta_minutes(distance_m: float, speed_kmh: float) -> float:
     return (distance_m / 1000.0) / speed_kmh * 60.0
 
 
+def estimate_path_eta_minutes(graph, path, time_of_day: Optional[int] = None) -> float:
+    """Estimate ETA using the same OSM edge speeds used by route costs."""
+    total_minutes = 0.0
+    for u, v in zip(path, path[1:]):
+        edges = graph.get_edge_data(u, v)
+        if not edges:
+            raise ValueError(f"Route path contains missing edge {u}->{v}")
+        edge = min(edges.values(), key=lambda data: float(data.get("length", float("inf"))))
+        length_m = float(edge.get("length", 0.0))
+        total_minutes += estimate_eta_minutes(length_m, parse_road_speed_kmh(edge))
+    return total_minutes * peak_hour_multiplier(time_of_day)
+
+
 def vehicle_speed_kmh(vehicle_type: str) -> float:
     return float(AVG_SPEED_KMPH.get(str(vehicle_type).lower(), 40))

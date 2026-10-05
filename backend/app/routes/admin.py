@@ -1,5 +1,5 @@
-from flask import Blueprint, jsonify, session
-from sqlalchemy import func, extract
+from flask import Blueprint, jsonify, request, session
+from sqlalchemy import func, extract, text
 from app.models import db, SearchHistory
 
 admin_bp = Blueprint('admin', __name__)
@@ -7,6 +7,10 @@ admin_bp = Blueprint('admin', __name__)
 
 def require_admin():
     return session.get('role') == 'admin'
+
+
+def _spatial_analytics_supported():
+    return db.engine.dialect.name == 'postgresql'
 
 
 @admin_bp.route('/stats', methods=['GET'])
@@ -84,4 +88,95 @@ def stats():
         'top_route_types':      top_route_types,
         'top_pairs':            top_pairs,
         'hourly_distribution':  hourly_distribution,
+    }), 200
+
+
+@admin_bp.route('/spatial-analytics', methods=['GET'])
+def spatial_analytics():
+    if not require_admin():
+        return jsonify({'error': 'Forbidden'}), 403
+
+    try:
+        k = int(request.args.get('k', '5'))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'k must be an integer from 1 to 20'}), 400
+    if not 1 <= k <= 20:
+        return jsonify({'error': 'k must be an integer from 1 to 20'}), 400
+    if not _spatial_analytics_supported():
+        return jsonify({
+            'error': 'Spatial analytics require a PostgreSQL/PostGIS database'
+        }), 503
+
+    cluster_rows = db.session.execute(
+        text(
+            """
+            WITH points AS (
+                SELECT 'origin' AS point_type, origin_geom AS geom
+                FROM search_history
+                WHERE origin_geom IS NOT NULL
+                UNION ALL
+                SELECT 'destination' AS point_type, dest_geom AS geom
+                FROM search_history
+                WHERE dest_geom IS NOT NULL
+            ),
+            clustered AS (
+                SELECT point_type, geom,
+                       ST_ClusterKMeans(geom, :k)
+                           OVER (PARTITION BY point_type) AS cluster_id
+                FROM points
+            )
+            SELECT point_type, cluster_id,
+                   ST_Y(ST_Centroid(ST_Collect(geom))) AS lat,
+                   ST_X(ST_Centroid(ST_Collect(geom))) AS lon,
+                   COUNT(*) AS weight
+            FROM clustered
+            GROUP BY point_type, cluster_id
+            ORDER BY point_type, cluster_id
+            """
+        ),
+        {'k': k},
+    ).mappings().all()
+    heatmap_rows = db.session.execute(
+        text(
+            """
+            WITH points AS (
+                SELECT origin_geom AS geom FROM search_history
+                WHERE origin_geom IS NOT NULL
+                UNION ALL
+                SELECT dest_geom AS geom FROM search_history
+                WHERE dest_geom IS NOT NULL
+            )
+            SELECT ROUND(ST_Y(geom)::numeric, 6) AS lat,
+                   ROUND(ST_X(geom)::numeric, 6) AS lon,
+                   COUNT(*) AS weight
+            FROM points
+            GROUP BY ROUND(ST_Y(geom)::numeric, 6),
+                     ROUND(ST_X(geom)::numeric, 6)
+            ORDER BY weight DESC
+            """
+        )
+    ).mappings().all()
+
+    clusters = {'origins': [], 'destinations': []}
+    for row in cluster_rows:
+        collection = (
+            clusters['origins']
+            if row['point_type'] == 'origin'
+            else clusters['destinations']
+        )
+        collection.append({
+            'cluster_id': int(row['cluster_id']),
+            'lat': float(row['lat']),
+            'lon': float(row['lon']),
+            'weight': int(row['weight']),
+        })
+    heatmap = [
+        [float(row['lat']), float(row['lon']), int(row['weight'])]
+        for row in heatmap_rows
+    ]
+    return jsonify({
+        'success': True,
+        'k': k,
+        'clusters': clusters,
+        'heatmap': heatmap,
     }), 200

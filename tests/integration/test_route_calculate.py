@@ -22,8 +22,6 @@ _DEST_COORDS = (13.0927, 80.2907)     # matches small_graph node 6
 
 
 def _patch_graph(monkeypatch, small_graph):
-    monkeypatch.setattr(route_api, "optimizer", None)
-
     def fake_load_graph(self, center_point, radius_m):
         self.graph = small_graph
 
@@ -70,6 +68,8 @@ class TestRouteCalculate:
             assert len(rows) == 1
             assert rows[0].destination == "Destination Place"
             assert rows[0].distance_m > 0
+            assert rows[0].origin_geom is None
+            assert rows[0].dest_geom is None
 
     def test_cache_hit_on_repeat_query(self, monkeypatch, client, small_graph, redis_up):
         if not redis_up:

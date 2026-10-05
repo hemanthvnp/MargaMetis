@@ -1,6 +1,7 @@
 """Unit tests for route_optimizer/confidence_scorer.py::RouteConfidenceScorer."""
 
 import pytest
+import networkx as nx
 
 from route_optimizer.confidence_scorer import RouteConfidenceScorer
 
@@ -46,6 +47,16 @@ class TestRoadQuality:
         motorway_route = scorer.score([1, 2, 3], departure_hour=13)  # primary + motorway
         residential_route = scorer.score([1, 4, 5, 6], departure_hour=13)  # tertiary/residential/secondary
         assert motorway_route.breakdown["road_quality"] > residential_route.breakdown["road_quality"]
+
+    def test_parallel_edges_use_the_shortest_edge_for_confidence(self):
+        graph = nx.MultiDiGraph()
+        graph.add_edge(1, 2, key=0, length=900.0, highway="primary")
+        graph.add_edge(1, 2, key=1, length=120.0, highway="residential")
+
+        edges = RouteConfidenceScorer(graph)._extract_edges([1, 2])
+
+        assert len(edges) == 1
+        assert edges[0][2]["length"] == 120.0
 
 
 class TestRiskLabel:

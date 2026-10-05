@@ -1,6 +1,11 @@
+import math
 from typing import Any, Callable, Dict, List
 
-from route_optimizer.speed_model import peak_hour_multiplier, parse_road_speed_kmh
+from route_optimizer.speed_model import (
+    ROAD_SPEED_KMPH,
+    peak_hour_multiplier,
+    parse_road_speed_kmh,
+)
 
 ROAD_QUALITY: Dict[str, float] = {
     "motorway": 100.0,
@@ -19,29 +24,6 @@ ROAD_QUALITY: Dict[str, float] = {
     "service": 15.0,
     "track": 10.0,
     "path": 5.0,
-}
-
-# Speed limits used when the edge has no maxspeed tag
-_SPEED_KMPH: Dict[str, float] = {
-    "motorway": 100.0, "motorway_link": 80.0,
-    "trunk": 80.0,     "trunk_link": 60.0,
-    "primary": 60.0,   "primary_link": 50.0,
-    "secondary": 50.0, "secondary_link": 40.0,
-    "tertiary": 40.0,  "tertiary_link": 30.0,
-    "residential": 30.0, "living_street": 20.0,
-    "unclassified": 40.0, "service": 20.0,
-    "track": 15.0, "path": 10.0,
-}
-
-_SAFETY: Dict[str, float] = {
-    "motorway": 0.90, "motorway_link": 0.85,
-    "trunk": 0.85,    "trunk_link": 0.80,
-    "primary": 0.80,  "primary_link": 0.75,
-    "secondary": 0.70,"secondary_link": 0.65,
-    "tertiary": 0.60, "tertiary_link": 0.55,
-    "residential": 0.50, "living_street": 0.55,
-    "unclassified": 0.45, "service": 0.35,
-    "track": 0.20, "path": 0.15,
 }
 
 # Quieter roads score higher for scenic — inverse of safety
@@ -78,7 +60,7 @@ _FUEL_ACCESS: Dict[str, float] = {
     "track": 0.05, "path": 0.05,
 }
 
-_DEFAULT_SPEED   = 40.0
+_DEFAULT_SPEED   = ROAD_SPEED_KMPH.get("unclassified", 40.0)
 _DEFAULT_SAFETY  = 0.50
 _DEFAULT_SCENIC  = 0.40
 _DEFAULT_COMFORT = 0.50
@@ -92,6 +74,28 @@ def _highway(data: Dict) -> str:
 
 def _parse_speed(data: Dict) -> float:
     return parse_road_speed_kmh(data)
+
+
+def _safety_score(highway: str) -> float:
+    return ROAD_QUALITY.get(highway, _DEFAULT_SAFETY * 100.0) / 100.0
+
+
+def _bearing_degrees(start: Dict, end: Dict) -> float:
+    lat1, lon1 = math.radians(float(start["y"])), math.radians(float(start["x"]))
+    lat2, lon2 = math.radians(float(end["y"])), math.radians(float(end["x"]))
+    delta_lon = lon2 - lon1
+    east = math.sin(delta_lon) * math.cos(lat2)
+    north = (
+        math.cos(lat1) * math.sin(lat2)
+        - math.sin(lat1) * math.cos(lat2) * math.cos(delta_lon)
+    )
+    return math.degrees(math.atan2(east, north)) % 360.0
+
+
+def _turn_angle_degrees(graph, prev_node: int, u: int, v: int) -> float:
+    incoming = _bearing_degrees(graph.nodes[prev_node], graph.nodes[u])
+    outgoing = _bearing_degrees(graph.nodes[u], graph.nodes[v])
+    return abs((outgoing - incoming + 180.0) % 360.0 - 180.0)
 
 
 def _is_toll(data: Dict) -> bool:
@@ -126,13 +130,15 @@ class CostFunctionGenerator:
         self.prefer: List[str] = [p.lower() for p in constraints.get("prefer", [])]
         self.time_of_day = constraints.get("time_of_day")
 
-    def generate(self) -> Callable:
+    def generate(self, graph=None) -> Callable:
         weights = self.weights
         avoid   = self.avoid
         prefer  = self.prefer
         peak_multiplier = peak_hour_multiplier(self.time_of_day)
 
-        def cost_fn(u: int, v: int, data: Dict) -> float:
+        def cost_fn(
+            u: int, v: int, data: Dict, prev_node: int | None = None
+        ) -> float:
             length = float(data.get("length", 1.0))
             hw = _highway(data)
 
@@ -166,9 +172,7 @@ class CostFunctionGenerator:
             # Speed: time to traverse in seconds, scaled back to metre-equivalent
             speed_ms = _parse_speed(data) / 3.6
             speed_component = (length / speed_ms if speed_ms > 0 else length * 10.0) * 40.0
-            peak_penalty = 1.0 + max(0.0, peak_multiplier - 1.0)
-
-            safety_component  = (1.0 - _SAFETY.get(hw, _DEFAULT_SAFETY)) * length
+            safety_component  = (1.0 - _safety_score(hw)) * length
 
             # Fuel is least efficient at extremes of speed — penalise deviation from ~80 km/h
             eff_speed = _parse_speed(data)
@@ -179,6 +183,9 @@ class CostFunctionGenerator:
             cost_component    = (length * 2.0 if _is_toll(data) else 0.0) + length * 0.1
 
             turn_penalty = 0.0
+            if prev_node is not None and graph is not None:
+                turn_angle = _turn_angle_degrees(graph, prev_node, u, v)
+                turn_penalty += length * (turn_angle / 90.0) ** 2 * 0.20
             if data.get("junction") in {"roundabout", "traffic_signals", "signal"}:
                 turn_penalty += length * 0.12
             if hw in {"residential", "unclassified", "service", "living_street"} and data.get("lanes"):
@@ -190,7 +197,7 @@ class CostFunctionGenerator:
                     pass
 
             total = (
-                weights["speed"]           * speed_component * peak_penalty
+                weights["speed"]           * speed_component * peak_multiplier
                 + weights["safety"]        * safety_component
                 + weights["fuel_efficiency"]* fuel_component
                 + weights["scenic"]        * scenic_component
@@ -200,6 +207,7 @@ class CostFunctionGenerator:
             )
             return total * prefer_mult
 
+        cost_fn.requires_prev_node = True
         return cost_fn
 
     def describe(self) -> str:

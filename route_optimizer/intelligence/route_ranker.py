@@ -3,9 +3,9 @@ from typing import Any, Dict, List, Optional
 import networkx as nx
 
 from .cost_function import (
-    _COMFORT, _DEFAULT_COMFORT, _DEFAULT_FUEL, _DEFAULT_SAFETY,
-    _DEFAULT_SCENIC, _DEFAULT_SPEED, _FUEL_ACCESS, _SAFETY, _SCENIC,
-    _SPEED_KMPH, _highway, _is_toll, _parse_speed,
+    _COMFORT, _DEFAULT_COMFORT, _DEFAULT_FUEL, _DEFAULT_SCENIC,
+    _DEFAULT_SPEED, _FUEL_ACCESS, _SCENIC, _highway, _is_toll, _parse_speed,
+    _safety_score,
 )
 
 _LABELS = ["Fastest", "Safest", "Most Scenic", "Most Fuel-Efficient", "Balanced", "Cheapest"]
@@ -126,7 +126,7 @@ class RouteRanker:
             speed_ms = _parse_speed(data) / 3.6
             total_time_s += length / speed_ms if speed_ms > 0 else length / (_DEFAULT_SPEED / 3.6)
 
-            safety_sum += _SAFETY.get(hw, _DEFAULT_SAFETY) * length
+            safety_sum += _safety_score(hw) * length
             scenic_sum += _SCENIC.get(hw, _DEFAULT_SCENIC) * length
             comfort_sum += _COMFORT.get(hw, _DEFAULT_COMFORT) * length
             fuel_sum += _FUEL_ACCESS.get(hw, _DEFAULT_FUEL) * length

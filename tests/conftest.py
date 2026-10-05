@@ -111,17 +111,21 @@ def skip_if_no_redis(redis_up: bool) -> None:
 # ----------------------------------------------------------------------
 
 @pytest.fixture
-def flask_app():
+def flask_app(monkeypatch):
     fd, db_path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     os.environ["DATABASE_URL"] = f"sqlite:///{db_path}"
     os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
     os.environ.pop("GROQ_API_KEY", None)
+    monkeypatch.setenv("TRUSTED_PROXY_COUNT", "1")
 
     from app import create_app
+    from flask_migrate import upgrade
 
     app = create_app("testing")
     app.config["TESTING"] = True
+    with app.app_context():
+        upgrade(directory=app.config["MIGRATIONS_DIR"])
     yield app
 
     try:
@@ -132,4 +136,7 @@ def flask_app():
 
 @pytest.fixture
 def client(flask_app):
-    return flask_app.test_client()
+    client = flask_app.test_client()
+    response = client.get("/api/auth/me")
+    client.environ_base["HTTP_X_CSRFTOKEN"] = response.get_json()["csrf_token"]
+    return client

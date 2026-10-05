@@ -1,9 +1,11 @@
-from flask import Blueprint, request, jsonify, session
+from flask import Blueprint, request, jsonify, session, has_app_context
 import logging
+import math
 import os
 import time
 
 import osmnx as ox
+from geoalchemy2 import WKTElement
 
 from route_optimizer.optimizer import RouteOptimizer
 from route_optimizer.utils.helpers import haversine_distance_m
@@ -12,22 +14,32 @@ from route_optimizer.intelligence.constraint_engine import ConstraintEngine
 from route_optimizer.intelligence.cost_function import CostFunctionGenerator
 from route_optimizer.intelligence.route_ranker import RouteRanker
 from route_optimizer.confidence_scorer import RouteConfidenceScorer
-from route_optimizer.speed_model import peak_hour_multiplier, vehicle_speed_kmh
+from route_optimizer.speed_model import (
+    estimate_path_eta_minutes,
+    vehicle_speed_kmh,
+)
+from route_optimizer.graph.spatial_store import nearest_spatial_node
 from app.models import db, User, SearchHistory
 from app import cache as redis_cache
 
 logger = logging.getLogger(__name__)
 route_bp = Blueprint('routes', __name__)
 
-# Global optimizer instance
-optimizer = None
-
-
 def get_optimizer():
-    global optimizer
-    if optimizer is None:
-        optimizer = RouteOptimizer()
-    return optimizer
+    return RouteOptimizer()
+
+
+def _route_eta_minutes(graph, route, time_of_day=None):
+    return estimate_path_eta_minutes(graph, route["path"], time_of_day)
+
+
+def _nearest_graph_node(graph, coordinates):
+    lat, lon = coordinates
+    if has_app_context() and db.engine.dialect.name == "postgresql":
+        node_id = nearest_spatial_node(db.engine, graph.nodes, lon, lat)
+        if node_id is not None:
+            return node_id
+    return ox.distance.nearest_nodes(graph, lon, lat)
 
 
 def _save_history(origin, destination, route_type, vehicle_type, payload):
@@ -48,6 +60,8 @@ def _save_history(origin, destination, route_type, vehicle_type, payload):
             distance_m=float(payload['distance_m']),
             estimated_time_min=payload.get('estimated_time_min'),
             result_json=save_json,
+            origin_geom=_history_geometry(payload, "origin"),
+            dest_geom=_history_geometry(payload, "destination"),
         )
         db.session.add(record)
         db.session.commit()
@@ -55,6 +69,24 @@ def _save_history(origin, destination, route_type, vehicle_type, payload):
     except Exception as e:
         db.session.rollback()
         logger.error(f"Failed to save history: {e}", exc_info=True)
+
+
+def _history_geometry(payload, place):
+    if db.engine.dialect.name != "postgresql":
+        return None
+    coordinates = payload.get(place)
+    if not isinstance(coordinates, dict):
+        return None
+    try:
+        lat = float(coordinates["lat"])
+        lon = float(coordinates["lon"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not (math.isfinite(lat) and math.isfinite(lon)):
+        return None
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return None
+    return WKTElement(f"POINT({lon} {lat})", srid=4326)
 
 
 @route_bp.route('/route/calculate', methods=['POST'])
@@ -104,7 +136,9 @@ def calculate_route():
                 dest_coords = tuple(dest_coords)
 
             # ── Route cache check (Redis, TTL 1h) ─────────────────
-            rkey = redis_cache.route_key(origin, destination, route_type, vehicle_type)
+            rkey = redis_cache.route_key(
+                origin, destination, route_type, vehicle_type, time_of_day
+            )
             cached_route = redis_cache.get(rkey)
             if cached_route:
                 logger.info(f"Route cache HIT: {origin} -> {destination}")
@@ -124,7 +158,10 @@ def calculate_route():
             optimizer_instance.load_graph(center_point=mid_point, radius_m=graph_radius)
 
             start_time = time.time()
-            result = optimizer_instance.find_route(origin_coords, dest_coords, route_type, vehicle_type)
+            result = optimizer_instance.find_route(
+                origin_coords, dest_coords, route_type, vehicle_type,
+                time_of_day=time_of_day,
+            )
             duration = time.time() - start_time
 
             path_coords = [
@@ -275,17 +312,17 @@ def smart_route():
         except Exception as graph_err:
             return jsonify({"error": f"Graph loading failed: {graph_err}"}), 400
 
-        origin_node = ox.distance.nearest_nodes(opt.graph, origin_coords[1], origin_coords[0])
-        dest_node = ox.distance.nearest_nodes(opt.graph, dest_coords[1], dest_coords[0])
+        origin_node = _nearest_graph_node(opt.graph, origin_coords)
+        dest_node = _nearest_graph_node(opt.graph, dest_coords)
 
         # Build cost function
-        cost_fn = CostFunctionGenerator(constraints).generate()
+        cost_fn = CostFunctionGenerator(constraints).generate(opt.graph)
         engine = GraphEngine(opt.graph)
 
         # Waypoint routing: chain origin → wp1 → wp2 → … → destination
         if waypoint_coords_list:
             wp_nodes = [
-                ox.distance.nearest_nodes(opt.graph, wc[1], wc[0])
+                _nearest_graph_node(opt.graph, wc)
                 for wc in waypoint_coords_list
             ]
             if wp_nodes:
@@ -339,17 +376,11 @@ def smart_route():
             s = route.get("scores", {})
             dist = route.get("distance", s.get("total_length_m", 0))
 
-            # ETA — distance / speed with peak-hour multiplier
-            _peak = {7, 8, 9, 17, 18, 19, 20}
-            _hw_speed = {"motorway": 80, "trunk": 70, "primary": 55, "secondary": 45,
-                         "tertiary": 35, "residential": 28, "unclassified": 35, "service": 18}
-            _hw = s.get("dominant_highway", "secondary")
-            _speed = _hw_speed.get(_hw, 40)
-            _tod = constraints.get("time_of_day") or 12
-            _base = (dist / 1000 / _speed) * 60
-            _base *= peak_hour_multiplier(_tod)
-            _base *= 1 + (1 - s.get("safety", 0.5)) * 0.3
-            eta = round(max(_base, 0.5), 1)
+            # ETA uses the same per-edge speed model as RouteOptimizer.
+            _tod = constraints.get("time_of_day")
+            if _tod is None:
+                _tod = 12
+            eta = round(max(_route_eta_minutes(opt.graph, route, _tod), 0.5), 1)
 
             # Semantic class heuristic
             _scenic = s.get("scenic", 0.5)
@@ -423,6 +454,8 @@ def smart_route():
                 distance_m=best.get("distance_m"),
                 estimated_time_min=best.get("eta_min"),
                 result_json=response_payload,
+                origin_geom=_history_geometry(response_payload, "origin"),
+                dest_geom=_history_geometry(response_payload, "destination"),
             )
             db.session.add(record)
             db.session.commit()
@@ -467,8 +500,8 @@ def benchmark_route():
         except Exception as graph_err:
             return jsonify({"error": f"Graph loading failed: {graph_err}"}), 400
 
-        origin_node = ox.distance.nearest_nodes(opt.graph, origin_coords[1], origin_coords[0])
-        dest_node = ox.distance.nearest_nodes(opt.graph, dest_coords[1], dest_coords[0])
+        origin_node = _nearest_graph_node(opt.graph, origin_coords)
+        dest_node = _nearest_graph_node(opt.graph, dest_coords)
 
         engine = GraphEngine(opt.graph)
         results = engine.benchmark(origin_node, dest_node)

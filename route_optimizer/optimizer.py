@@ -7,7 +7,7 @@ import networkx as nx
 from .config.models import RouteConfig
 from .graph.manager import GraphManager
 from .intelligence.graph_engine import GraphEngine
-from .speed_model import vehicle_speed_kmh
+from .speed_model import estimate_path_eta_minutes
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,7 @@ class RouteOptimizer:
         dest_coords: Tuple[float, float],
         route_type: str = "shortest",
         vehicle_type: str = "car",
+        time_of_day: Optional[int] = None,
     ) -> dict:
         if self.graph is None:
             raise ValueError("Graph not loaded. Call load_graph() first.")
@@ -60,14 +61,15 @@ class RouteOptimizer:
         weight_fn = None
         if route_type in _PRESETS:
             from .intelligence.cost_function import CostFunctionGenerator
-            weight_fn = CostFunctionGenerator(_PRESETS[route_type]).generate()
+            weight_fn = CostFunctionGenerator(_PRESETS[route_type]).generate(self.graph)
 
         result = engine.astar(origin_node, dest_node, weight_fn)
         if result["path"] is None:
             raise ValueError("No path found between these locations.")
 
-        speed = vehicle_speed_kmh(vehicle_type)
-        eta_min = round((result["distance"] / 1000 / speed) * 60, 2)
+        eta_min = round(
+            estimate_path_eta_minutes(self.graph, result["path"], time_of_day), 2
+        )
 
         return {
             "path":               result["path"],
