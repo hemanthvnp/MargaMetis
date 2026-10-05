@@ -25,8 +25,6 @@ _DEST_COORDS = (13.0927, 80.2907)
 
 
 def _patch_graph(monkeypatch, small_graph):
-    monkeypatch.setattr(route_api, "optimizer", None)
-
     def fake_load_graph(self, center_point, radius_m):
         self.graph = small_graph
 

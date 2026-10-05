@@ -23,15 +23,8 @@ from app import cache as redis_cache
 logger = logging.getLogger(__name__)
 route_bp = Blueprint('routes', __name__)
 
-# Global optimizer instance
-optimizer = None
-
-
 def get_optimizer():
-    global optimizer
-    if optimizer is None:
-        optimizer = RouteOptimizer()
-    return optimizer
+    return RouteOptimizer()
 
 
 def _route_eta_minutes(graph, route, time_of_day=None):
