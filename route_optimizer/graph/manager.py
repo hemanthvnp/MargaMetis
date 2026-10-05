@@ -43,43 +43,48 @@ ox.settings.requests_timeout = 25
 
 
 class GraphManager:
+    # Shared across instances: optimizers are created per request, and each
+    # one re-parsing the seed GraphML would multiply its memory cost.
+    _regional_graph: Optional[nx.MultiDiGraph] = None
+    _regional_graph_load_attempted = False
 
     def __init__(self, config: RouteConfig) -> None:
         self.config = config
         os.makedirs(self.config.graph_cache_dir, exist_ok=True)
-        self._regional_graph: Optional[nx.MultiDiGraph] = None
-        self._regional_graph_load_attempted = False
 
     def _regional_seed(self, center_point: Tuple[float, float], radius_m: int) -> Optional[nx.MultiDiGraph]:
         dist_to_seed_center = haversine_distance_m(*center_point, *_REGIONAL_SEED_CENTER)
         if dist_to_seed_center + radius_m > _REGIONAL_SEED_RADIUS_M - _REGIONAL_SEED_MARGIN_M:
             return None  # requested area isn't fully covered by the seed graph
 
-        if not self._regional_graph_load_attempted:
-            self._regional_graph_load_attempted = True
+        if not GraphManager._regional_graph_load_attempted:
+            GraphManager._regional_graph_load_attempted = True
             if os.path.exists(_REGIONAL_SEED_PATH):
                 try:
-                    self._regional_graph = ox.load_graphml(_REGIONAL_SEED_PATH)
-                    logger.info(f"Loaded regional seed graph: {len(self._regional_graph.nodes)} nodes")
+                    GraphManager._regional_graph = ox.load_graphml(_REGIONAL_SEED_PATH)
+                    logger.info(f"Loaded regional seed graph: {len(GraphManager._regional_graph.nodes)} nodes")
                 except Exception as e:
                     logger.error(f"Regional seed graph failed to load: {e}")
 
-        return self._regional_graph
+        return GraphManager._regional_graph
 
     def load_graph(self, center_point: Tuple[float, float], radius_m: int) -> nx.MultiDiGraph:
-        seed = self._regional_seed(center_point, radius_m)
-        if seed is not None:
-            logger.info(f"Serving {center_point} radius {radius_m}m from pre-baked regional seed (no Overpass call)")
-            return seed
-
         cache_name = f"graph_{center_point[0]:.6f}_{center_point[1]:.6f}_{radius_m}.graphml"
         cache_file = os.path.join(self.config.graph_cache_dir, cache_name)
 
+        # With PostGIS the regional seed lives in the database (see
+        # scripts/ingest_graphs.py). Parsing its GraphML takes ~850 MB of RAM,
+        # which a 512 MB instance cannot hold, so never load it there.
         if (
             has_app_context()
             and current_app.extensions["sqlalchemy"].engine.dialect.name == "postgresql"
         ):
             return self._load_postgis_graph(center_point, radius_m, cache_file)
+
+        seed = self._regional_seed(center_point, radius_m)
+        if seed is not None:
+            logger.info(f"Serving {center_point} radius {radius_m}m from pre-baked regional seed (no Overpass call)")
+            return seed
 
         if os.path.exists(cache_file):
             logger.info(f"Loading graph from disk cache: {cache_file}")

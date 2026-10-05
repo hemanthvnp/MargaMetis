@@ -3,7 +3,7 @@ import math
 from typing import Iterable, Mapping, Tuple
 
 import networkx as nx
-from shapely.geometry import LineString, shape
+from shapely.geometry import LineString
 from shapely import wkt
 from sqlalchemy import text
 
@@ -25,6 +25,12 @@ def bbox_from_center(
     )
 
 
+# Edge attributes the router actually reads. Everything else OSM stores per
+# edge (osmid, ref, bridge, shapely geometry...) is dropped: with ~150k edges
+# the full attribute dicts cost several GB, far over a 512 MB instance.
+_EDGE_ATTRS = ("highway", "maxspeed", "lanes", "toll", "junction", "name", "oneway")
+
+
 def graph_from_rows(
     node_rows: Iterable[Mapping], edge_rows: Iterable[Mapping]
 ) -> nx.MultiDiGraph:
@@ -44,15 +50,10 @@ def graph_from_rows(
             attrs = json.loads(attrs)
         if not isinstance(attrs, dict):
             raise ValueError(f"Edge {u}->{v} has non-object attrs")
-        attrs = dict(attrs)
-        attrs["length"] = float(row["length_m"])
-        attrs.setdefault("highway", row["highway"])
-        geometry_json = row.get("geometry_geojson")
-        if geometry_json:
-            if isinstance(geometry_json, str):
-                geometry_json = json.loads(geometry_json)
-            attrs["geometry"] = shape(geometry_json)
-        graph.add_edge(u, v, key=key, **attrs)
+        slim = {name: attrs[name] for name in _EDGE_ATTRS if name in attrs}
+        slim["length"] = float(row["length_m"])
+        slim.setdefault("highway", row["highway"])
+        graph.add_edge(u, v, key=key, **slim)
 
     return graph
 
@@ -84,7 +85,6 @@ def load_spatial_graph(engine, bbox, center_point, radius_m) -> nx.MultiDiGraph:
     edge_query = text(
         """
         SELECT e.u, e.v, e.key, e.length_m, e.highway, e.attrs,
-               ST_AsGeoJSON(e.geom) AS geometry_geojson,
                ST_X(un.geom) AS u_x, ST_Y(un.geom) AS u_y,
                ST_X(vn.geom) AS v_x, ST_Y(vn.geom) AS v_y
         FROM osm_edges AS e

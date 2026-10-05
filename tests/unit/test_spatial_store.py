@@ -214,3 +214,19 @@ def test_graph_ingestion_batches_and_ignores_conflicting_osm_ids(
     assert len(statements) == small_graph.number_of_nodes() + small_graph.number_of_edges()
     assert all("DO NOTHING" in sql for sql, _ in statements)
     assert all(len(rows) == 1 for _, rows in statements)
+
+
+def test_graph_from_rows_keeps_only_routing_attributes():
+    from route_optimizer.graph.spatial_store import graph_from_rows
+
+    edge = {
+        "u": 1, "v": 2, "key": 0, "length_m": 120.0, "highway": "primary",
+        "u_x": 80.0, "u_y": 13.0, "v_x": 80.1, "v_y": 13.1,
+        "attrs": {"maxspeed": "50", "lanes": "2", "osmid": 99, "ref": "NH48",
+                  "bridge": "yes", "geometry": "ignored"},
+    }
+
+    graph = graph_from_rows([], [edge])
+
+    data = graph.get_edge_data(1, 2)[0]
+    assert data == {"maxspeed": "50", "lanes": "2", "length": 120.0, "highway": "primary"}

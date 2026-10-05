@@ -23,7 +23,7 @@ def _graph_files(root: Path, requested: list[Path] | None) -> list[Path]:
     if requested:
         paths = [path.resolve() for path in requested]
     else:
-        primary = root / "chennai_central.graphml"
+        primary = root / "route_optimizer" / "regional_seed" / "chennai_central.graphml"
         if not primary.exists():
             logger.warning("Primary graph %s is absent", primary)
         paths = ([primary] if primary.exists() else []) + sorted(
