@@ -291,7 +291,7 @@ def smart_route():
         dest_node = ox.distance.nearest_nodes(opt.graph, dest_coords[1], dest_coords[0])
 
         # Build cost function
-        cost_fn = CostFunctionGenerator(constraints).generate()
+        cost_fn = CostFunctionGenerator(constraints).generate(opt.graph)
         engine = GraphEngine(opt.graph)
 
         # Waypoint routing: chain origin → wp1 → wp2 → … → destination

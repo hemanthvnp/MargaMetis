@@ -1,3 +1,4 @@
+import math
 from typing import Any, Callable, Dict, List
 
 from route_optimizer.speed_model import (
@@ -79,6 +80,24 @@ def _safety_score(highway: str) -> float:
     return ROAD_QUALITY.get(highway, _DEFAULT_SAFETY * 100.0) / 100.0
 
 
+def _bearing_degrees(start: Dict, end: Dict) -> float:
+    lat1, lon1 = math.radians(float(start["y"])), math.radians(float(start["x"]))
+    lat2, lon2 = math.radians(float(end["y"])), math.radians(float(end["x"]))
+    delta_lon = lon2 - lon1
+    east = math.sin(delta_lon) * math.cos(lat2)
+    north = (
+        math.cos(lat1) * math.sin(lat2)
+        - math.sin(lat1) * math.cos(lat2) * math.cos(delta_lon)
+    )
+    return math.degrees(math.atan2(east, north)) % 360.0
+
+
+def _turn_angle_degrees(graph, prev_node: int, u: int, v: int) -> float:
+    incoming = _bearing_degrees(graph.nodes[prev_node], graph.nodes[u])
+    outgoing = _bearing_degrees(graph.nodes[u], graph.nodes[v])
+    return abs((outgoing - incoming + 180.0) % 360.0 - 180.0)
+
+
 def _is_toll(data: Dict) -> bool:
     return str(data.get("toll", "no")).lower() in ("yes", "true", "1")
 
@@ -111,13 +130,15 @@ class CostFunctionGenerator:
         self.prefer: List[str] = [p.lower() for p in constraints.get("prefer", [])]
         self.time_of_day = constraints.get("time_of_day")
 
-    def generate(self) -> Callable:
+    def generate(self, graph=None) -> Callable:
         weights = self.weights
         avoid   = self.avoid
         prefer  = self.prefer
         peak_multiplier = peak_hour_multiplier(self.time_of_day)
 
-        def cost_fn(u: int, v: int, data: Dict) -> float:
+        def cost_fn(
+            u: int, v: int, data: Dict, prev_node: int | None = None
+        ) -> float:
             length = float(data.get("length", 1.0))
             hw = _highway(data)
 
@@ -162,6 +183,9 @@ class CostFunctionGenerator:
             cost_component    = (length * 2.0 if _is_toll(data) else 0.0) + length * 0.1
 
             turn_penalty = 0.0
+            if prev_node is not None and graph is not None:
+                turn_angle = _turn_angle_degrees(graph, prev_node, u, v)
+                turn_penalty += length * (turn_angle / 90.0) ** 2 * 0.20
             if data.get("junction") in {"roundabout", "traffic_signals", "signal"}:
                 turn_penalty += length * 0.12
             if hw in {"residential", "unclassified", "service", "living_street"} and data.get("lanes"):
@@ -183,6 +207,7 @@ class CostFunctionGenerator:
             )
             return total * prefer_mult
 
+        cost_fn.requires_prev_node = True
         return cost_fn
 
     def describe(self) -> str:

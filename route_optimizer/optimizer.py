@@ -61,7 +61,7 @@ class RouteOptimizer:
         weight_fn = None
         if route_type in _PRESETS:
             from .intelligence.cost_function import CostFunctionGenerator
-            weight_fn = CostFunctionGenerator(_PRESETS[route_type]).generate()
+            weight_fn = CostFunctionGenerator(_PRESETS[route_type]).generate(self.graph)
 
         result = engine.astar(origin_node, dest_node, weight_fn)
         if result["path"] is None:

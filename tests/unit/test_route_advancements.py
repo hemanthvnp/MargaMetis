@@ -1,11 +1,14 @@
 import pytest
+import networkx as nx
 
 from route_optimizer.intelligence.constraint_engine import extract_constraints
 from route_optimizer.intelligence.cost_function import (
     ROAD_QUALITY,
     CostFunctionGenerator,
     _safety_score,
+    _turn_angle_degrees,
 )
+from route_optimizer.intelligence.graph_engine import GraphEngine
 from route_optimizer.intelligence.route_ranker import RouteRanker
 from route_optimizer.confidence_scorer import RouteConfidenceScorer
 from route_optimizer.optimizer import RouteOptimizer
@@ -87,3 +90,53 @@ def test_safety_score_uses_road_quality(highway, quality):
 
 def test_unknown_highway_safety_uses_quality_default():
     assert _safety_score("unknown") == 0.5
+
+
+def test_bearing_turn_cost_prefers_equal_length_path_with_fewer_turns():
+    graph = nx.MultiDiGraph()
+    coords = {
+        1: (0.0, 0.0),
+        2: (0.0, 0.0001),
+        3: (0.0, 0.0002),
+        4: (0.0001, 0.0),
+        5: (0.0, 0.0003),
+        6: (0.0001, 0.0002),
+    }
+    for node, (lat, lon) in coords.items():
+        graph.add_node(node, y=lat, x=lon)
+    edge_data = {"length": 100.0, "highway": "residential", "maxspeed": "30"}
+    for u, v in (
+        (1, 2), (2, 3), (3, 5),
+        (1, 4), (4, 6), (6, 5),
+    ):
+        graph.add_edge(u, v, **edge_data)
+
+    straight_path = [1, 2, 3, 5]
+    turning_path = [1, 4, 6, 5]
+    cost_fn = CostFunctionGenerator({"weights": {"comfort": 1.0}}).generate(graph)
+
+    def path_cost(path):
+        return sum(
+            cost_fn(
+                u,
+                v,
+                graph.get_edge_data(u, v)[0],
+                path[index - 1] if index > 0 else None,
+            )
+            for index, (u, v) in enumerate(zip(path, path[1:]))
+        )
+
+    assert path_cost(straight_path) < path_cost(turning_path)
+    assert GraphEngine(graph).astar(1, 5, cost_fn)["path"] == straight_path
+
+
+def test_bearing_turn_angles_scale_from_straight_to_uturn():
+    graph = nx.MultiDiGraph()
+    graph.add_node(1, y=0.0, x=0.0)
+    graph.add_node(2, y=0.0, x=0.001)
+    graph.add_node(3, y=0.0, x=0.002)
+    graph.add_node(4, y=-0.001, x=0.001)
+
+    assert _turn_angle_degrees(graph, 1, 2, 3) == pytest.approx(0.0)
+    assert _turn_angle_degrees(graph, 1, 2, 4) == pytest.approx(90.0)
+    assert _turn_angle_degrees(graph, 1, 2, 1) == pytest.approx(180.0)
