@@ -93,12 +93,14 @@ def create_app(config_name='development'):
     from app.auth_api import auth_bp
     from app.routes.admin import admin_bp
     from app.routes.user import user_bp
+    from app.routes.spatial import spatial_bp
 
     app.register_blueprint(route_bp, url_prefix='/api')
     app.register_blueprint(health_bp, url_prefix='/api')
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(admin_bp, url_prefix='/api/admin')
     app.register_blueprint(user_bp, url_prefix='/api/user')
+    app.register_blueprint(spatial_bp, url_prefix='/api/spatial')
 
     logger.info(f"Flask app created ({config_name})")
 
