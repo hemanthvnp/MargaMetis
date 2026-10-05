@@ -111,7 +111,9 @@ def calculate_route():
                 dest_coords = tuple(dest_coords)
 
             # ── Route cache check (Redis, TTL 1h) ─────────────────
-            rkey = redis_cache.route_key(origin, destination, route_type, vehicle_type)
+            rkey = redis_cache.route_key(
+                origin, destination, route_type, vehicle_type, time_of_day
+            )
             cached_route = redis_cache.get(rkey)
             if cached_route:
                 logger.info(f"Route cache HIT: {origin} -> {destination}")
@@ -132,7 +134,8 @@ def calculate_route():
 
             start_time = time.time()
             result = optimizer_instance.find_route(
-                origin_coords, dest_coords, route_type, vehicle_type
+                origin_coords, dest_coords, route_type, vehicle_type,
+                time_of_day=time_of_day,
             )
             duration = time.time() - start_time
 
@@ -340,7 +343,9 @@ def smart_route():
             dist = route.get("distance", s.get("total_length_m", 0))
 
             # ETA uses the same per-edge speed model as RouteOptimizer.
-            _tod = constraints.get("time_of_day") or 12
+            _tod = constraints.get("time_of_day")
+            if _tod is None:
+                _tod = 12
             eta = round(max(_route_eta_minutes(opt.graph, route, _tod), 0.5), 1)
 
             # Semantic class heuristic

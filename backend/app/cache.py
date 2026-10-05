@@ -37,8 +37,17 @@ def geocode_key(location: str) -> str:
     return _key("geocode:", location)
 
 
-def route_key(origin: str, dest: str, route_type: str, vehicle: str) -> str:
-    return _key("route:", origin, dest, route_type, vehicle)
+def route_key(
+    origin: str,
+    dest: str,
+    route_type: str,
+    vehicle: str,
+    time_of_day: Optional[int] = None,
+) -> str:
+    parts = [origin, dest, route_type, vehicle]
+    if time_of_day is not None:
+        parts.append(str(time_of_day))
+    return _key("route:", *parts)
 
 
 def get(key: str) -> Optional[Any]:

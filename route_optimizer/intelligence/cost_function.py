@@ -158,8 +158,6 @@ class CostFunctionGenerator:
             # Speed: time to traverse in seconds, scaled back to metre-equivalent
             speed_ms = _parse_speed(data) / 3.6
             speed_component = (length / speed_ms if speed_ms > 0 else length * 10.0) * 40.0
-            peak_penalty = 1.0 + max(0.0, peak_multiplier - 1.0)
-
             safety_component  = (1.0 - _SAFETY.get(hw, _DEFAULT_SAFETY)) * length
 
             # Fuel is least efficient at extremes of speed — penalise deviation from ~80 km/h
@@ -182,7 +180,7 @@ class CostFunctionGenerator:
                     pass
 
             total = (
-                weights["speed"]           * speed_component * peak_penalty
+                weights["speed"]           * speed_component * peak_multiplier
                 + weights["safety"]        * safety_component
                 + weights["fuel_efficiency"]* fuel_component
                 + weights["scenic"]        * scenic_component

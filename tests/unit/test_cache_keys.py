@@ -42,6 +42,11 @@ class TestKeyGeneration:
         k2 = redis_cache.route_key("Chennai", "Coimbatore", "scenic", "car")
         assert k1 != k2
 
+    def test_route_key_differs_by_departure_hour(self):
+        peak = redis_cache.route_key("Chennai", "Coimbatore", "fastest", "car", 18)
+        off_peak = redis_cache.route_key("Chennai", "Coimbatore", "fastest", "car", 3)
+        assert peak != off_peak
+
     def test_geocode_and_route_keys_have_distinct_prefixes(self):
         gk = redis_cache.geocode_key("Chennai")
         rk = redis_cache.route_key("Chennai", "Coimbatore", "fastest", "car")
