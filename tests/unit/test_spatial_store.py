@@ -230,3 +230,40 @@ def test_graph_from_rows_keeps_only_routing_attributes():
 
     data = graph.get_edge_data(1, 2)[0]
     assert data == {"maxspeed": "50", "lanes": "2", "length": 120.0, "highway": "primary"}
+
+
+def test_persist_graph_commits_each_batch_and_stores_only_routing_attributes(
+    small_graph, monkeypatch
+):
+    from psycopg2 import extras
+
+    small_graph.edges[1, 2, 0]["osmid"] = 12345
+    small_graph.edges[1, 2, 0]["bridge"] = "yes"
+    edge_rows = []
+    monkeypatch.setattr(
+        extras, "execute_values",
+        lambda _c, sql, rows, template=None: edge_rows.extend(
+            rows if "osm_edges" in sql else []
+        ),
+    )
+
+    class Connection:
+        commits = 0
+
+        def cursor(self):
+            class Cursor:
+                def close(self):
+                    pass
+
+            return Cursor()
+
+        def commit(self):
+            Connection.commits += 1
+
+    connection = Connection()
+    persist_graph(connection, small_graph, batch_size=5, commit_each_batch=True)
+
+    # 6 nodes -> 2 commits, 14 edges -> 3 commits at batch_size=5
+    assert connection.commits == 5
+    stored = [row[-1].adapted for row in edge_rows]
+    assert all(set(attrs) <= {"highway", "maxspeed", "lanes", "toll", "junction", "name", "oneway"} for attrs in stored)

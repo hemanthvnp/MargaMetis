@@ -1,4 +1,5 @@
 import json
+import logging
 import math
 from typing import Iterable, Mapping, Tuple
 
@@ -6,6 +7,8 @@ import networkx as nx
 from shapely.geometry import LineString
 from shapely import wkt
 from sqlalchemy import text
+
+logger = logging.getLogger(__name__)
 
 
 def bbox_from_center(
@@ -130,7 +133,18 @@ def nearest_spatial_node(
     return int(node_id) if node_id is not None else None
 
 
-def persist_graph(connection, graph: nx.MultiDiGraph, batch_size: int = 1000) -> None:
+def persist_graph(
+    connection,
+    graph: nx.MultiDiGraph,
+    batch_size: int = 1000,
+    commit_each_batch: bool = False,
+) -> None:
+    """Insert a graph's nodes and edges, skipping rows that already exist.
+
+    commit_each_batch commits after every batch so a long bulk load shows real
+    progress and keeps its work if the connection drops; leave it off when the
+    caller wants the whole graph in one transaction.
+    """
     if batch_size < 1:
         raise ValueError("batch_size must be greater than zero")
 
@@ -140,35 +154,40 @@ def persist_graph(connection, graph: nx.MultiDiGraph, batch_size: int = 1000) ->
         return Json(value, dumps=lambda obj: json.dumps(obj, default=str))
 
     cursor = connection.cursor()
-    node_batch = []
+
+    def flush(sql, rows, template, label, done):
+        if not rows:
+            return
+        execute_values(cursor, sql, rows, template=template)
+        if commit_each_batch:
+            connection.commit()
+            logger.info("Persisted %s %s", done, label)
+        rows.clear()
+
+    node_sql = """
+        INSERT INTO osm_nodes (id, geom) VALUES %s
+        ON CONFLICT (id) DO NOTHING
+    """
+    node_template = "(%s, ST_GeomFromText(%s, 4326))"
+    node_batch, nodes_done = [], 0
     for node_id, attrs in graph.nodes(data=True):
         if "x" not in attrs or "y" not in attrs:
             raise ValueError(f"OSM node {node_id} is missing x/y coordinates")
-        point_wkt = f"POINT({float(attrs['x'])} {float(attrs['y'])})"
-        node_batch.append((int(node_id), point_wkt))
-        if len(node_batch) >= batch_size:
-            execute_values(
-                cursor,
-                """
-                INSERT INTO osm_nodes (id, geom) VALUES %s
-                ON CONFLICT (id) DO NOTHING
-                """,
-                node_batch,
-                template="(%s, ST_GeomFromText(%s, 4326))",
-            )
-            node_batch.clear()
-    if node_batch:
-        execute_values(
-            cursor,
-            """
-            INSERT INTO osm_nodes (id, geom) VALUES %s
-            ON CONFLICT (id) DO NOTHING
-            """,
-            node_batch,
-            template="(%s, ST_GeomFromText(%s, 4326))",
+        node_batch.append(
+            (int(node_id), f"POINT({float(attrs['x'])} {float(attrs['y'])})")
         )
+        nodes_done += 1
+        if len(node_batch) >= batch_size:
+            flush(node_sql, node_batch, node_template, "nodes", nodes_done)
+    flush(node_sql, node_batch, node_template, "nodes", nodes_done)
 
-    edge_batch = []
+    edge_sql = """
+        INSERT INTO osm_edges (u, v, key, length_m, highway, geom, attrs)
+        VALUES %s
+        ON CONFLICT (u, v, key) DO NOTHING
+    """
+    edge_template = "(%s, %s, %s, %s, %s, ST_GeomFromText(%s, 4326), %s)"
+    edge_batch, edges_done = [], 0
     for u, v, key, data in graph.edges(keys=True, data=True):
         if "length" not in data:
             raise ValueError(f"OSM edge {u}->{v} is missing length")
@@ -176,7 +195,9 @@ def persist_graph(connection, graph: nx.MultiDiGraph, batch_size: int = 1000) ->
         if isinstance(highway, list):
             highway = highway[0]
 
-        attrs = {name: value for name, value in data.items() if name != "geometry"}
+        # Only the attributes the router reads (see _EDGE_ATTRS); the rest of
+        # OSM's per-edge tags bloat each row several-fold for no benefit.
+        attrs = {name: data[name] for name in _EDGE_ATTRS if name in data}
         geometry = data.get("geometry")
         if isinstance(geometry, str):
             geometry = wkt.loads(geometry)
@@ -195,29 +216,8 @@ def persist_graph(connection, graph: nx.MultiDiGraph, batch_size: int = 1000) ->
             geometry.wkt,
             json_value(attrs),
         ))
+        edges_done += 1
         if len(edge_batch) >= batch_size:
-            execute_values(
-                cursor,
-                """
-                INSERT INTO osm_edges (u, v, key, length_m, highway, geom, attrs)
-                VALUES %s
-                ON CONFLICT (u, v, key) DO NOTHING
-                """,
-                edge_batch,
-                template=(
-                    "(%s, %s, %s, %s, %s, ST_GeomFromText(%s, 4326), %s)"
-                ),
-            )
-            edge_batch.clear()
-    if edge_batch:
-        execute_values(
-            cursor,
-            """
-            INSERT INTO osm_edges (u, v, key, length_m, highway, geom, attrs)
-            VALUES %s
-            ON CONFLICT (u, v, key) DO NOTHING
-            """,
-            edge_batch,
-            template="(%s, %s, %s, %s, %s, ST_GeomFromText(%s, 4326), %s)",
-        )
+            flush(edge_sql, edge_batch, edge_template, "edges", edges_done)
+    flush(edge_sql, edge_batch, edge_template, "edges", edges_done)
     cursor.close()

@@ -68,7 +68,9 @@ def ingest_graphs(
                 graph.number_of_edges(),
                 path.name,
             )
-            persist_graph(connection, graph, batch_size=batch_size)
+            persist_graph(
+                connection, graph, batch_size=batch_size, commit_each_batch=True
+            )
         connection.commit()
     except Exception:
         connection.rollback()
@@ -92,7 +94,7 @@ def main() -> None:
         type=Path,
         help="GraphML input; repeat to ingest multiple files",
     )
-    parser.add_argument("--batch-size", type=int, default=1000)
+    parser.add_argument("--batch-size", type=int, default=5000)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
