@@ -25,17 +25,6 @@ ROAD_QUALITY: Dict[str, float] = {
     "path": 5.0,
 }
 
-_SAFETY: Dict[str, float] = {
-    "motorway": 0.90, "motorway_link": 0.85,
-    "trunk": 0.85,    "trunk_link": 0.80,
-    "primary": 0.80,  "primary_link": 0.75,
-    "secondary": 0.70,"secondary_link": 0.65,
-    "tertiary": 0.60, "tertiary_link": 0.55,
-    "residential": 0.50, "living_street": 0.55,
-    "unclassified": 0.45, "service": 0.35,
-    "track": 0.20, "path": 0.15,
-}
-
 # Quieter roads score higher for scenic — inverse of safety
 _SCENIC: Dict[str, float] = {
     "motorway": 0.05, "motorway_link": 0.05,
@@ -84,6 +73,10 @@ def _highway(data: Dict) -> str:
 
 def _parse_speed(data: Dict) -> float:
     return parse_road_speed_kmh(data)
+
+
+def _safety_score(highway: str) -> float:
+    return ROAD_QUALITY.get(highway, _DEFAULT_SAFETY * 100.0) / 100.0
 
 
 def _is_toll(data: Dict) -> bool:
@@ -158,7 +151,7 @@ class CostFunctionGenerator:
             # Speed: time to traverse in seconds, scaled back to metre-equivalent
             speed_ms = _parse_speed(data) / 3.6
             speed_component = (length / speed_ms if speed_ms > 0 else length * 10.0) * 40.0
-            safety_component  = (1.0 - _SAFETY.get(hw, _DEFAULT_SAFETY)) * length
+            safety_component  = (1.0 - _safety_score(hw)) * length
 
             # Fuel is least efficient at extremes of speed — penalise deviation from ~80 km/h
             eff_speed = _parse_speed(data)

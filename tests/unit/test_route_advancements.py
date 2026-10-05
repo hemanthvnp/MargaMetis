@@ -1,8 +1,13 @@
 import pytest
 
 from route_optimizer.intelligence.constraint_engine import extract_constraints
-from route_optimizer.intelligence.cost_function import CostFunctionGenerator
+from route_optimizer.intelligence.cost_function import (
+    ROAD_QUALITY,
+    CostFunctionGenerator,
+    _safety_score,
+)
 from route_optimizer.intelligence.route_ranker import RouteRanker
+from route_optimizer.confidence_scorer import RouteConfidenceScorer
 from route_optimizer.optimizer import RouteOptimizer
 from route_optimizer.speed_model import estimate_path_eta_minutes
 from app.routes.route_api import _route_eta_minutes
@@ -66,3 +71,19 @@ def test_optimizer_and_smart_route_share_per_edge_eta(small_graph):
     )
 
     assert result["estimated_time_min"] == round(smart_route_eta, 2)
+
+
+@pytest.mark.parametrize(("highway", "quality"), ROAD_QUALITY.items())
+def test_safety_score_uses_road_quality(highway, quality):
+    edge = {"length": 100.0, "highway": highway}
+    safety_cost = CostFunctionGenerator({
+        "weights": {"safety": 1.0},
+    }).generate()(1, 2, edge)
+
+    assert _safety_score(highway) == quality / 100.0
+    assert safety_cost == pytest.approx((1 - quality / 100.0) * 100.0)
+    assert RouteConfidenceScorer(None)._road_quality_score([(1, 2, edge)]) == quality
+
+
+def test_unknown_highway_safety_uses_quality_default():
+    assert _safety_score("unknown") == 0.5
