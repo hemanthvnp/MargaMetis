@@ -3,18 +3,31 @@ import { adminService } from '../services/admin';
 
 export const AdminDashboard = () => {
   const [stats, setStats] = useState(null);
+  const [spatialAnalytics, setSpatialAnalytics] = useState(null);
+  const [spatialError, setSpatialError] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
       setLoading(true);
-      const res = await adminService.stats();
+      const [res, spatialRes] = await Promise.all([
+        adminService.stats(),
+        adminService.spatialAnalytics(),
+      ]);
       if (res && res.success) {
         setStats(res);
         setError(null);
       } else {
         setError(res?.error || 'Failed to load stats');
+      }
+      if (spatialRes && spatialRes.success) {
+        setSpatialAnalytics(spatialRes);
+        setSpatialError(null);
+      } else {
+        setSpatialError(
+          spatialRes?.error || 'Failed to load spatial analytics'
+        );
       }
       setLoading(false);
     })();
@@ -109,6 +122,61 @@ export const AdminDashboard = () => {
           ))}
         </div>
       </div>
+
+      <section className="bg-white rounded-lg shadow p-4 space-y-4">
+        <h3 className="font-semibold">Spatial Search Analytics</h3>
+        {spatialError ? (
+          <p className="text-sm text-gray-600">{spatialError}</p>
+        ) : (
+          <>
+            <p className="text-sm text-gray-600">
+              Origin and destination clusters (k={spatialAnalytics?.k}).
+            </p>
+            {['origins', 'destinations'].map((kind) => (
+              <div key={kind}>
+                <h4 className="font-medium capitalize">{kind}</h4>
+                {spatialAnalytics?.clusters?.[kind]?.length ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left">
+                      <thead>
+                        <tr>
+                          <th className="py-1">Cluster</th>
+                          <th className="py-1">Latitude</th>
+                          <th className="py-1">Longitude</th>
+                          <th className="py-1">Searches</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {spatialAnalytics.clusters[kind].map((cluster) => (
+                          <tr key={cluster.cluster_id}>
+                            <td className="py-1">{cluster.cluster_id + 1}</td>
+                            <td className="py-1">{cluster.lat.toFixed(5)}</td>
+                            <td className="py-1">{cluster.lon.toFixed(5)}</td>
+                            <td className="py-1">{cluster.weight}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500">No locations recorded.</p>
+                )}
+              </div>
+            ))}
+            <div>
+              <h4 className="font-medium">Heatmap-ready points</h4>
+              {spatialAnalytics?.heatmap?.length ? (
+                <p className="text-sm text-gray-600">
+                  {spatialAnalytics.heatmap.length} coordinates aggregated as
+                  [latitude, longitude, weight].
+                </p>
+              ) : (
+                <p className="text-sm text-gray-500">No geocoded searches yet.</p>
+              )}
+            </div>
+          </>
+        )}
+      </section>
     </div>
   );
 };

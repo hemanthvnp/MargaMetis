@@ -31,6 +31,8 @@ def test_baseline_migration_recreates_current_sqlite_schema(flask_app):
             "distance_m",
             "estimated_time_min",
             "result_json",
+            "origin_geom",
+            "dest_geom",
             "created_at",
         }
         revision = db.session.execute(
@@ -39,5 +41,5 @@ def test_baseline_migration_recreates_current_sqlite_schema(flask_app):
 
         spatial_tables = {"osm_nodes", "osm_edges"} & set(inspector.get_table_names())
 
-    assert revision == "20261005_0002"
+    assert revision == "20261005_0003"
     assert spatial_tables == set()

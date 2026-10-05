@@ -1,9 +1,11 @@
 from flask import Blueprint, request, jsonify, session, has_app_context
 import logging
+import math
 import os
 import time
 
 import osmnx as ox
+from geoalchemy2 import WKTElement
 
 from route_optimizer.optimizer import RouteOptimizer
 from route_optimizer.utils.helpers import haversine_distance_m
@@ -58,6 +60,8 @@ def _save_history(origin, destination, route_type, vehicle_type, payload):
             distance_m=float(payload['distance_m']),
             estimated_time_min=payload.get('estimated_time_min'),
             result_json=save_json,
+            origin_geom=_history_geometry(payload, "origin"),
+            dest_geom=_history_geometry(payload, "destination"),
         )
         db.session.add(record)
         db.session.commit()
@@ -65,6 +69,24 @@ def _save_history(origin, destination, route_type, vehicle_type, payload):
     except Exception as e:
         db.session.rollback()
         logger.error(f"Failed to save history: {e}", exc_info=True)
+
+
+def _history_geometry(payload, place):
+    if db.engine.dialect.name != "postgresql":
+        return None
+    coordinates = payload.get(place)
+    if not isinstance(coordinates, dict):
+        return None
+    try:
+        lat = float(coordinates["lat"])
+        lon = float(coordinates["lon"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not (math.isfinite(lat) and math.isfinite(lon)):
+        return None
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return None
+    return WKTElement(f"POINT({lon} {lat})", srid=4326)
 
 
 @route_bp.route('/route/calculate', methods=['POST'])
@@ -423,6 +445,8 @@ def smart_route():
                 distance_m=best.get("distance_m"),
                 estimated_time_min=best.get("eta_min"),
                 result_json=response_payload,
+                origin_geom=_history_geometry(response_payload, "origin"),
+                dest_geom=_history_geometry(response_payload, "destination"),
             )
             db.session.add(record)
             db.session.commit()

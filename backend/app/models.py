@@ -36,6 +36,18 @@ class SearchHistory(db.Model):
     distance_m         = db.Column(db.Float, nullable=False)
     estimated_time_min = db.Column(db.Float, nullable=True)
     result_json        = db.Column(db.JSON, nullable=True)
+    origin_geom        = db.Column(
+        Geometry(geometry_type='POINT', srid=4326, spatial_index=False).with_variant(
+            db.Text(), 'sqlite'
+        ),
+        nullable=True,
+    )
+    dest_geom          = db.Column(
+        Geometry(geometry_type='POINT', srid=4326, spatial_index=False).with_variant(
+            db.Text(), 'sqlite'
+        ),
+        nullable=True,
+    )
     created_at         = db.Column(db.DateTime, server_default=func.now(), nullable=False)
 
     user = db.relationship('User', backref=db.backref('searches', lazy=True))
