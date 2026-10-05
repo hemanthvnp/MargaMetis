@@ -73,39 +73,34 @@ def load_spatial_graph(engine, bbox, center_point, radius_m) -> nx.MultiDiGraph:
         "lat": lat,
         "radius_m": radius_m,
     }
-    node_query = text(
+    # Pick the nodes inside the circle first (a cheap point test the GiST index
+    # can serve), then take the edges joining two of them -- the same truncation
+    # osmnx.graph_from_point applies. Testing ST_DWithin on every edge's
+    # linestring as geography is ~10x slower (it cannot use the index), which
+    # made a 76k-edge request take over 30 s on Render.
+    query = text(
         """
-        SELECT id, ST_X(geom) AS x, ST_Y(geom) AS y
-        FROM osm_nodes
-        WHERE geom && ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
-          AND ST_DWithin(
-              geom::geography,
-              ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
-              :radius_m
-          )
-        """
-    )
-    edge_query = text(
-        """
+        WITH n AS MATERIALIZED (
+            SELECT id, ST_X(geom) AS x, ST_Y(geom) AS y
+            FROM osm_nodes
+            WHERE geom && ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
+              AND ST_DWithin(
+                  geom::geography,
+                  ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
+                  :radius_m
+              )
+        )
         SELECT e.u, e.v, e.key, e.length_m, e.highway, e.attrs,
-               ST_X(un.geom) AS u_x, ST_Y(un.geom) AS u_y,
-               ST_X(vn.geom) AS v_x, ST_Y(vn.geom) AS v_y
-        FROM osm_edges AS e
-        JOIN osm_nodes AS un ON un.id = e.u
-        JOIN osm_nodes AS vn ON vn.id = e.v
-        WHERE e.geom && ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
-          AND ST_DWithin(
-              e.geom::geography,
-              ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
-              :radius_m
-          )
+               un.x AS u_x, un.y AS u_y, vn.x AS v_x, vn.y AS v_y
+        FROM n AS un
+        JOIN osm_edges AS e ON e.u = un.id
+        JOIN n AS vn ON vn.id = e.v
         """
     )
 
     with engine.connect() as connection:
-        node_rows = connection.execute(node_query, query_params).mappings().all()
-        edge_rows = connection.execute(edge_query, query_params).mappings().all()
-    return graph_from_rows(node_rows, edge_rows)
+        edge_rows = connection.execute(query, query_params).mappings().all()
+    return graph_from_rows([], edge_rows)
 
 
 def nearest_spatial_node(

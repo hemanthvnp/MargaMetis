@@ -99,12 +99,16 @@ def test_spatial_queries_use_indexable_bbox_and_metric_distance(small_graph):
 
         def execute(self, statement, params):
             self.statements.append((str(statement), params))
-            if len(self.statements) == 1:
-                return Result([
-                    {"id": node, "x": attrs["x"], "y": attrs["y"]}
-                    for node, attrs in small_graph.nodes(data=True)
-                ])
-            return Result([])
+            nodes = small_graph.nodes
+            return Result([
+                {
+                    "u": u, "v": v, "key": key, "length_m": data["length"],
+                    "highway": data["highway"], "attrs": {},
+                    "u_x": nodes[u]["x"], "u_y": nodes[u]["y"],
+                    "v_x": nodes[v]["x"], "v_y": nodes[v]["y"],
+                }
+                for u, v, key, data in small_graph.edges(keys=True, data=True)
+            ])
 
     class Engine:
         def __init__(self):
@@ -121,13 +125,16 @@ def test_spatial_queries_use_indexable_bbox_and_metric_distance(small_graph):
         radius_m=1000,
     )
 
-    assert graph.number_of_edges() == 0
-    assert len(engine.connection.statements) == 2
-    for sql, params in engine.connection.statements:
-        assert "&& ST_MakeEnvelope" in sql
-        assert "ST_DWithin" in sql
-        assert params["lon"] == 80.5
-        assert params["lat"] == 13.5
+    assert graph.number_of_edges() == small_graph.number_of_edges()
+    # One query: nodes in the circle first (indexable), then their edges.
+    assert len(engine.connection.statements) == 1
+    sql, params = engine.connection.statements[0]
+    assert "&& ST_MakeEnvelope" in sql
+    assert "ST_DWithin" in sql
+    assert "MATERIALIZED" in sql
+    assert "e.geom::geography" not in sql
+    assert params["lon"] == 80.5
+    assert params["lat"] == 13.5
 
 
 def test_postgis_nearest_node_matches_osmnx_for_twenty_points(small_graph):
