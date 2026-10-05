@@ -56,8 +56,10 @@ def fetch_pois(lat: float, lon: float, radius_m: int):
 
 def ingest_pois(database_url: str, lat: float, lon: float, radius_m: int,
                 batch_size: int = 1000) -> int:
-    if database_url.startswith("postgres://"):
-        database_url = database_url.replace("postgres://", "postgresql://", 1)
+    for legacy in ("postgres://", "postgresql://"):
+        if database_url.startswith(legacy):
+            database_url = "postgresql+psycopg2://" + database_url[len(legacy):]
+            break
     engine = create_engine(database_url)
     if engine.dialect.name != "postgresql":
         engine.dispose()

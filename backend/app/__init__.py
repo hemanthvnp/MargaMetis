@@ -26,8 +26,12 @@ def create_app(config_name='development'):
     # Render provides 'postgres://' (legacy) — SQLAlchemy needs 'postgresql://'
     if 'DATABASE_URL' not in os.environ:
         db_url = 'sqlite:///margametis.db'
-    if db_url.startswith('postgres://'):
-        db_url = db_url.replace('postgres://', 'postgresql://', 1)
+    # Name the psycopg2 driver explicitly: SQLAlchemy 2.1+ defaults a bare
+    # 'postgresql://' to psycopg3, which this image does not install.
+    for legacy in ('postgres://', 'postgresql://'):
+        if db_url.startswith(legacy):
+            db_url = 'postgresql+psycopg2://' + db_url[len(legacy):]
+            break
     app.config['SQLALCHEMY_DATABASE_URI'] = db_url
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['MIGRATIONS_DIR'] = os.path.abspath(

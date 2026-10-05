@@ -88,3 +88,18 @@ def test_upgrade_adopts_database_that_predates_alembic(monkeypatch, tmp_path):
     assert revision == "20261005_0004"
     assert users == ["keep"]
     assert {"origin_geom", "dest_geom"} <= columns
+
+
+@pytest.mark.parametrize("url", [
+    "postgres://u:p@host:5432/db",
+    "postgresql://u:p@host:5432/db",
+])
+def test_postgres_urls_pin_the_psycopg2_driver(monkeypatch, url):
+    """SQLAlchemy 2.1 defaults bare postgresql:// to psycopg3, which the image
+    does not install -- the app must name psycopg2 explicitly."""
+    monkeypatch.setenv("DATABASE_URL", url)
+    from app import create_app
+
+    app = create_app("testing")
+
+    assert app.config["SQLALCHEMY_DATABASE_URI"] == "postgresql+psycopg2://u:p@host:5432/db"

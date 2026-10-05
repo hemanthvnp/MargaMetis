@@ -47,8 +47,10 @@ def ingest_graphs(
 ) -> None:
     if batch_size < 1:
         raise ValueError("batch_size must be greater than zero")
-    if database_url.startswith("postgres://"):
-        database_url = database_url.replace("postgres://", "postgresql://", 1)
+    for legacy in ("postgres://", "postgresql://"):
+        if database_url.startswith(legacy):
+            database_url = "postgresql+psycopg2://" + database_url[len(legacy):]
+            break
 
     engine = create_engine(database_url)
     if engine.dialect.name != "postgresql":
