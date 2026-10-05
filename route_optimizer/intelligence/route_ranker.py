@@ -5,7 +5,7 @@ import networkx as nx
 from .cost_function import (
     _COMFORT, _DEFAULT_COMFORT, _DEFAULT_FUEL, _DEFAULT_SAFETY,
     _DEFAULT_SCENIC, _DEFAULT_SPEED, _FUEL_ACCESS, _SAFETY, _SCENIC,
-    _SPEED_KMPH, _highway, _is_toll, _parse_speed,
+    _highway, _is_toll, _parse_speed,
 )
 
 _LABELS = ["Fastest", "Safest", "Most Scenic", "Most Fuel-Efficient", "Balanced", "Cheapest"]

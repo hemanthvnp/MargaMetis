@@ -1,6 +1,10 @@
 from typing import Any, Callable, Dict, List
 
-from route_optimizer.speed_model import peak_hour_multiplier, parse_road_speed_kmh
+from route_optimizer.speed_model import (
+    ROAD_SPEED_KMPH,
+    peak_hour_multiplier,
+    parse_road_speed_kmh,
+)
 
 ROAD_QUALITY: Dict[str, float] = {
     "motorway": 100.0,
@@ -19,18 +23,6 @@ ROAD_QUALITY: Dict[str, float] = {
     "service": 15.0,
     "track": 10.0,
     "path": 5.0,
-}
-
-# Speed limits used when the edge has no maxspeed tag
-_SPEED_KMPH: Dict[str, float] = {
-    "motorway": 100.0, "motorway_link": 80.0,
-    "trunk": 80.0,     "trunk_link": 60.0,
-    "primary": 60.0,   "primary_link": 50.0,
-    "secondary": 50.0, "secondary_link": 40.0,
-    "tertiary": 40.0,  "tertiary_link": 30.0,
-    "residential": 30.0, "living_street": 20.0,
-    "unclassified": 40.0, "service": 20.0,
-    "track": 15.0, "path": 10.0,
 }
 
 _SAFETY: Dict[str, float] = {
@@ -78,7 +70,7 @@ _FUEL_ACCESS: Dict[str, float] = {
     "track": 0.05, "path": 0.05,
 }
 
-_DEFAULT_SPEED   = 40.0
+_DEFAULT_SPEED   = ROAD_SPEED_KMPH.get("unclassified", 40.0)
 _DEFAULT_SAFETY  = 0.50
 _DEFAULT_SCENIC  = 0.40
 _DEFAULT_COMFORT = 0.50

@@ -12,7 +12,10 @@ from route_optimizer.intelligence.constraint_engine import ConstraintEngine
 from route_optimizer.intelligence.cost_function import CostFunctionGenerator
 from route_optimizer.intelligence.route_ranker import RouteRanker
 from route_optimizer.confidence_scorer import RouteConfidenceScorer
-from route_optimizer.speed_model import peak_hour_multiplier, vehicle_speed_kmh
+from route_optimizer.speed_model import (
+    estimate_path_eta_minutes,
+    vehicle_speed_kmh,
+)
 from app.models import db, User, SearchHistory
 from app import cache as redis_cache
 
@@ -28,6 +31,10 @@ def get_optimizer():
     if optimizer is None:
         optimizer = RouteOptimizer()
     return optimizer
+
+
+def _route_eta_minutes(graph, route, time_of_day=None):
+    return estimate_path_eta_minutes(graph, route["path"], time_of_day)
 
 
 def _save_history(origin, destination, route_type, vehicle_type, payload):
@@ -124,7 +131,9 @@ def calculate_route():
             optimizer_instance.load_graph(center_point=mid_point, radius_m=graph_radius)
 
             start_time = time.time()
-            result = optimizer_instance.find_route(origin_coords, dest_coords, route_type, vehicle_type)
+            result = optimizer_instance.find_route(
+                origin_coords, dest_coords, route_type, vehicle_type
+            )
             duration = time.time() - start_time
 
             path_coords = [
@@ -330,17 +339,9 @@ def smart_route():
             s = route.get("scores", {})
             dist = route.get("distance", s.get("total_length_m", 0))
 
-            # ETA — distance / speed with peak-hour multiplier
-            _peak = {7, 8, 9, 17, 18, 19, 20}
-            _hw_speed = {"motorway": 80, "trunk": 70, "primary": 55, "secondary": 45,
-                         "tertiary": 35, "residential": 28, "unclassified": 35, "service": 18}
-            _hw = s.get("dominant_highway", "secondary")
-            _speed = _hw_speed.get(_hw, 40)
+            # ETA uses the same per-edge speed model as RouteOptimizer.
             _tod = constraints.get("time_of_day") or 12
-            _base = (dist / 1000 / _speed) * 60
-            _base *= peak_hour_multiplier(_tod)
-            _base *= 1 + (1 - s.get("safety", 0.5)) * 0.3
-            eta = round(max(_base, 0.5), 1)
+            eta = round(max(_route_eta_minutes(opt.graph, route, _tod), 0.5), 1)
 
             # Semantic class heuristic
             _scenic = s.get("scenic", 0.5)

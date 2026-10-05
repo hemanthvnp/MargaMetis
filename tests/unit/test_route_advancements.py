@@ -1,6 +1,8 @@
 from route_optimizer.intelligence.constraint_engine import extract_constraints
 from route_optimizer.intelligence.cost_function import CostFunctionGenerator
 from route_optimizer.intelligence.route_ranker import RouteRanker
+from route_optimizer.optimizer import RouteOptimizer
+from app.routes.route_api import _route_eta_minutes
 
 
 def test_extract_constraints_flags_contradiction():
@@ -32,3 +34,19 @@ def test_route_ranker_deduplicates_overlapping_paths():
         {"path": [10, 11, 12, 13], "distance": 1010, "scores": {"composite": 0.80}},
     ]
     assert len(RouteRanker._deduplicate(routes)) == 1
+
+
+def test_optimizer_and_smart_route_share_per_edge_eta(small_graph):
+    optimizer = RouteOptimizer()
+    optimizer.graph = small_graph
+
+    result = optimizer.find_route(
+        (small_graph.nodes[1]["y"], small_graph.nodes[1]["x"]),
+        (small_graph.nodes[3]["y"], small_graph.nodes[3]["x"]),
+        time_of_day=12,
+    )
+    smart_route_eta = _route_eta_minutes(
+        small_graph, {"path": result["path"]}, time_of_day=12
+    )
+
+    assert result["estimated_time_min"] == round(smart_route_eta, 2)
