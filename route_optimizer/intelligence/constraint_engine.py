@@ -82,6 +82,39 @@ def _normalize(weights: Dict[str, float]) -> Dict[str, float]:
     return {k: round(v / total, 4) for k, v in weights.items()}
 
 
+def _highway_action_positions(query: str) -> tuple[Optional[int], Optional[int]]:
+    highway_terms = r"(?:highways?|expressways?|motorways?|nh)\b"
+    avoid_match = re.search(
+        rf"\b(?:avoid|no)\b.{{0,20}}\b{highway_terms}", query
+    )
+    prefer_match = re.search(
+        rf"\b(?:prefer|like|choose)\b.{{0,20}}\b{highway_terms}"
+        rf"|\b{highway_terms}.{{0,20}}\b(?:prefer|like|choose)\b",
+        query,
+    )
+    return (
+        avoid_match.start() if avoid_match else None,
+        prefer_match.start() if prefer_match else None,
+    )
+
+
+def _resolve_highway_contradiction(
+    avoid: List[str], prefer: List[str], query: str
+) -> Optional[str]:
+    if "highways" not in avoid or "highways" not in prefer:
+        return None
+
+    avoid_position, prefer_position = _highway_action_positions(query.lower())
+    if prefer_position is not None and (
+        avoid_position is None or prefer_position > avoid_position
+    ):
+        avoid.remove("highways")
+        return "Dropped 'avoid highways' because 'prefer highways' was stated later."
+
+    prefer.remove("highways")
+    return "Dropped 'prefer highways' because 'avoid highways' was stated later."
+
+
 def _validate_and_fix(data: Dict[str, Any], raw_query: str) -> Dict[str, Any]:
     data["raw_query"] = raw_query
     weights = data.get("weights", {})
@@ -102,15 +135,21 @@ def _validate_and_fix(data: Dict[str, Any], raw_query: str) -> Dict[str, Any]:
 
     avoid = {str(v).lower() for v in data.get("avoid", [])}
     prefer = {str(v).lower() for v in data.get("prefer", [])}
+    resolution = _resolve_highway_contradiction(
+        data["avoid"], data["prefer"], raw_query
+    ) or data.get("contradiction_resolution")
     contradictions = []
-    if "highways" in avoid and "highways" in prefer:
-        contradictions.append("avoid_highways_vs_prefer_highways")
     if data["weights"].get("speed", 0.0) > 0.35 and data["weights"].get("scenic", 0.0) > 0.20:
         contradictions.append("speed_vs_scenic")
-    if contradictions:
-        data["contradiction_resolution"] = " ; ".join(contradictions)
+    if resolution:
+        data["contradiction_resolution"] = resolution
+    elif contradictions:
+        data["contradiction_resolution"] = (
+            "Speed and scenic preferences conflict; route ranking balances them "
+            "using their extracted weights."
+        )
     else:
-        data["contradiction_resolution"] = None
+        data["contradiction_resolution"] = resolution
     return data
 
 
@@ -173,15 +212,16 @@ def _rule_extract(query: str) -> Dict[str, Any]:
 
     if re.search(r'\b(no|avoid|without).{0,8}toll', q):     avoid.append("tolls")
     if re.search(r'\btoll.{0,5}free\b', q):                  avoid.append("tolls")
-    if re.search(r'\b(?:avoid|no)\b.*\b(?:highway|highways|expressway|expressways|motorway|motorways|NH)\b', q):
+    avoid_highway_position, prefer_highway_position = _highway_action_positions(q)
+    if avoid_highway_position is not None:
         avoid.append("highways")
     if re.search(r'\b(avoid|no).{0,8}traffic|traffic.{0,5}free\b', q): avoid.append("busy_roads")
     if re.search(r'\bdark|unlit', q):
         avoid.append("dark_roads"); prefer.append("lit_roads")
     if re.search(r'\bunpaved|dirt road|kachcha', q):          avoid.append("unpaved")
     if re.search(r'\bnarrow', q):                             avoid.append("narrow_roads")
-    prefers_highways = bool(re.search(r'\b(?:prefer|like|choose)\b.*\b(?:highway|highways|expressway|expressways|motorway|motorways|NH)\b|\b(?:highway|highways|expressway|expressways|motorway|motorways|NH)\b.*\b(?:prefer|like|choose)\b', q, re.IGNORECASE))
-    if (re.search(r'\b(?:highway|highways|expressway|expressways|motorway|motorways|NH)\b', q) and "highways" not in avoid) or prefers_highways:
+    prefers_highways = prefer_highway_position is not None
+    if (re.search(r'\b(?:highways?|expressways?|motorways?|nh)\b', q) and "highways" not in avoid) or prefers_highways:
         prefer.append("highways")
     if re.search(r'\bfuel.{0,10}station|petrol.{0,5}pump|ev.{0,10}station|charging|more.{0,5}ev\b', q, re.IGNORECASE):
         prefer.append("fuel_stations")
@@ -245,11 +285,14 @@ def _rule_extract(query: str) -> Dict[str, Any]:
         weights["cost"] = max(weights["cost"], 0.30)
         weights = _normalize(weights)
 
-    contradiction_resolution = None
-    if ("highways" in avoid and "highways" in prefer) or (
+    contradiction_resolution = _resolve_highway_contradiction(avoid, prefer, q)
+    if contradiction_resolution is None and (
         weights.get("speed", 0.0) > 0.35 and weights.get("scenic", 0.0) > 0.20
     ):
-        contradiction_resolution = "conflicting priorities detected: preferred and avoided highway styles are mixed, so the route ranking resolves by weighting the higher priority dimension"
+        contradiction_resolution = (
+            "Speed and scenic preferences conflict; route ranking balances them "
+            "using their extracted weights."
+        )
 
     priorities = sorted(_WEIGHT_DIMS, key=lambda d: -weights[d])
     clarification = len([w for w in re.split(r"\W+", query.strip()) if len(w) > 2]) < 1

@@ -41,6 +41,35 @@ class TestAvoidPrefer:
         result = extract_constraints("avoid highways please")
         assert "highways" in result["avoid"]
 
+    def test_last_highway_preference_wins_and_drops_avoid(self):
+        result = extract_constraints("avoid highways, prefer highways")
+        assert "highways" not in result["avoid"]
+        assert "highways" in result["prefer"]
+        assert result["contradiction_resolution"] == (
+            "Dropped 'avoid highways' because 'prefer highways' was stated later."
+        )
+
+    def test_later_non_highway_avoid_does_not_create_contradiction(self):
+        result = extract_constraints("prefer highways but avoid tolls")
+        assert "highways" in result["prefer"]
+        assert "highways" not in result["avoid"]
+        assert "tolls" in result["avoid"]
+        assert result["contradiction_resolution"] is None
+
+    def test_avoid_highways_alone_is_not_a_contradiction(self):
+        result = extract_constraints("avoid highways")
+        assert "highways" in result["avoid"]
+        assert "highways" not in result["prefer"]
+        assert result["contradiction_resolution"] is None
+
+    def test_highway_contradiction_honors_last_avoid_statement(self):
+        result = extract_constraints("prefer highways but avoid highways")
+        assert "highways" in result["avoid"]
+        assert "highways" not in result["prefer"]
+        assert result["contradiction_resolution"] == (
+            "Dropped 'prefer highways' because 'avoid highways' was stated later."
+        )
+
     def test_dark_roads_avoided_and_lit_preferred(self):
         result = extract_constraints("avoid dark roads at night")
         assert "dark_roads" in result["avoid"]
