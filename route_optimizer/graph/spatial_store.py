@@ -37,17 +37,23 @@ _EDGE_ATTRS = ("highway", "maxspeed", "lanes", "toll", "junction", "name", "onew
 def graph_from_rows(
     node_rows: Iterable[Mapping], edge_rows: Iterable[Mapping]
 ) -> nx.MultiDiGraph:
+    """Build a request graph. Edge rows may carry endpoint coordinates
+    (u_x/u_y/v_x/v_y) or rely on node_rows; only edge endpoints become nodes."""
     graph = nx.MultiDiGraph()
     graph.graph["crs"] = "epsg:4326"
+    coords = {
+        int(row["id"]): (float(row["x"]), float(row["y"])) for row in node_rows
+    }
 
-    for row in node_rows:
-        node_id = int(row["id"])
-        graph.add_node(node_id, x=float(row["x"]), y=float(row["y"]))
+    def add_endpoint(node_id, x=None, y=None):
+        if x is None:
+            x, y = coords[node_id]
+        graph.add_node(node_id, x=float(x), y=float(y))
 
     for row in edge_rows:
         u, v, key = int(row["u"]), int(row["v"]), int(row["key"])
-        graph.add_node(u, x=float(row["u_x"]), y=float(row["u_y"]))
-        graph.add_node(v, x=float(row["v_x"]), y=float(row["v_y"]))
+        add_endpoint(u, row.get("u_x"), row.get("u_y"))
+        add_endpoint(v, row.get("v_x"), row.get("v_y"))
         attrs = row["attrs"] or {}
         if isinstance(attrs, str):
             attrs = json.loads(attrs)
@@ -59,6 +65,33 @@ def graph_from_rows(
         graph.add_edge(u, v, key=key, **slim)
 
     return graph
+
+
+_EDGES_BETWEEN_NODES = text(
+    """
+    SELECT e.u, e.v, e.key, e.length_m, e.highway, e.attrs
+    FROM osm_edges AS e
+    WHERE e.u = ANY(CAST(:ids AS BIGINT[])) AND e.v = ANY(CAST(:ids AS BIGINT[]))
+    """
+)
+
+
+def _load_graph_between_selected_nodes(engine, node_query, params) -> nx.MultiDiGraph:
+    """Pick nodes with a spatial query, then fetch the edges joining two of them.
+
+    Two plain queries instead of one CTE join: Postgres estimates the node set
+    at a handful of rows and can choose a nested loop that rescans it for every
+    edge, which ran for 10+ minutes once osm_edges passed ~450k rows.
+    """
+    with engine.connect() as connection:
+        node_rows = connection.execute(node_query, params).mappings().all()
+        node_ids = [int(row["id"]) for row in node_rows]
+        if not node_ids:
+            return graph_from_rows([], [])
+        edge_rows = connection.execute(
+            _EDGES_BETWEEN_NODES, {"ids": node_ids}
+        ).mappings().all()
+    return graph_from_rows(node_rows, edge_rows)
 
 
 def load_spatial_graph(engine, bbox, center_point, radius_m) -> nx.MultiDiGraph:
@@ -73,34 +106,23 @@ def load_spatial_graph(engine, bbox, center_point, radius_m) -> nx.MultiDiGraph:
         "lat": lat,
         "radius_m": radius_m,
     }
-    # Pick the nodes inside the circle first (a cheap point test the GiST index
-    # can serve), then take the edges joining two of them -- the same truncation
-    # osmnx.graph_from_point applies. Testing ST_DWithin on every edge's
-    # linestring as geography is ~10x slower (it cannot use the index), which
-    # made a 76k-edge request take over 30 s on Render.
-    query = text(
+    # Nodes inside the circle (a cheap indexed point test), then the edges
+    # joining two of them -- the truncation osmnx.graph_from_point applies.
+    # ST_DWithin on every edge's linestring as geography cannot use the index
+    # and was ~10x slower.
+    node_query = text(
         """
-        WITH n AS MATERIALIZED (
-            SELECT id, ST_X(geom) AS x, ST_Y(geom) AS y
-            FROM osm_nodes
-            WHERE geom && ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
-              AND ST_DWithin(
-                  geom::geography,
-                  ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
-                  :radius_m
-              )
-        )
-        SELECT e.u, e.v, e.key, e.length_m, e.highway, e.attrs,
-               un.x AS u_x, un.y AS u_y, vn.x AS v_x, vn.y AS v_y
-        FROM n AS un
-        JOIN osm_edges AS e ON e.u = un.id
-        JOIN n AS vn ON vn.id = e.v
+        SELECT id, ST_X(geom) AS x, ST_Y(geom) AS y
+        FROM osm_nodes
+        WHERE geom && ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
+          AND ST_DWithin(
+              geom::geography,
+              ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
+              :radius_m
+          )
         """
     )
-
-    with engine.connect() as connection:
-        edge_rows = connection.execute(query, query_params).mappings().all()
-    return graph_from_rows([], edge_rows)
+    return _load_graph_between_selected_nodes(engine, node_query, query_params)
 
 
 def corridor_bbox(
@@ -125,22 +147,14 @@ def load_corridor_graph(
     """
     min_lon, min_lat, max_lon, max_lat = corridor_bbox(points, buffer_m)
     wkt_line = "LINESTRING(" + ", ".join(f"{lon} {lat}" for lat, lon in points) + ")"
-    query = text(
+    node_query = text(
         """
-        WITH path AS (
-            SELECT ST_GeogFromText(CAST(:path_wkt AS TEXT)) AS g
-        ),
-        n AS MATERIALIZED (
-            SELECT id, ST_X(geom) AS x, ST_Y(geom) AS y
-            FROM osm_nodes, path
-            WHERE geom && ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
-              AND ST_DWithin(geom::geography, path.g, :buffer_m)
-        )
-        SELECT e.u, e.v, e.key, e.length_m, e.highway, e.attrs,
-               un.x AS u_x, un.y AS u_y, vn.x AS v_x, vn.y AS v_y
-        FROM n AS un
-        JOIN osm_edges AS e ON e.u = un.id
-        JOIN n AS vn ON vn.id = e.v
+        SELECT id, ST_X(geom) AS x, ST_Y(geom) AS y
+        FROM osm_nodes
+        WHERE geom && ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
+          AND ST_DWithin(
+              geom::geography, ST_GeogFromText(CAST(:path_wkt AS TEXT)), :buffer_m
+          )
         """
     )
     params = {
@@ -148,9 +162,7 @@ def load_corridor_graph(
         "min_lon": min_lon, "min_lat": min_lat,
         "max_lon": max_lon, "max_lat": max_lat,
     }
-    with engine.connect() as connection:
-        edge_rows = connection.execute(query, params).mappings().all()
-    return graph_from_rows([], edge_rows)
+    return _load_graph_between_selected_nodes(engine, node_query, params)
 
 
 def nearest_spatial_node(

@@ -99,14 +99,14 @@ def test_spatial_queries_use_indexable_bbox_and_metric_distance(small_graph):
 
         def execute(self, statement, params):
             self.statements.append((str(statement), params))
-            nodes = small_graph.nodes
+            if len(self.statements) == 1:
+                return Result([
+                    {"id": node, "x": attrs["x"], "y": attrs["y"]}
+                    for node, attrs in small_graph.nodes(data=True)
+                ])
             return Result([
-                {
-                    "u": u, "v": v, "key": key, "length_m": data["length"],
-                    "highway": data["highway"], "attrs": {},
-                    "u_x": nodes[u]["x"], "u_y": nodes[u]["y"],
-                    "v_x": nodes[v]["x"], "v_y": nodes[v]["y"],
-                }
+                {"u": u, "v": v, "key": key, "length_m": data["length"],
+                 "highway": data["highway"], "attrs": {}}
                 for u, v, key, data in small_graph.edges(keys=True, data=True)
             ])
 
@@ -126,15 +126,16 @@ def test_spatial_queries_use_indexable_bbox_and_metric_distance(small_graph):
     )
 
     assert graph.number_of_edges() == small_graph.number_of_edges()
-    # One query: nodes in the circle first (indexable), then their edges.
-    assert len(engine.connection.statements) == 1
-    sql, params = engine.connection.statements[0]
-    assert "&& ST_MakeEnvelope" in sql
-    assert "ST_DWithin" in sql
-    assert "MATERIALIZED" in sql
-    assert "e.geom::geography" not in sql
-    assert params["lon"] == 80.5
-    assert params["lat"] == 13.5
+    # Two plain queries: nodes in the circle (indexable), then edges between them.
+    assert len(engine.connection.statements) == 2
+    node_sql, node_params = engine.connection.statements[0]
+    edge_sql, edge_params = engine.connection.statements[1]
+    assert "&& ST_MakeEnvelope" in node_sql
+    assert "ST_DWithin" in node_sql
+    assert node_params["lon"] == 80.5
+    assert node_params["lat"] == 13.5
+    assert "= ANY(" in edge_sql and "ST_DWithin" not in edge_sql
+    assert sorted(edge_params["ids"]) == sorted(small_graph.nodes)
 
 
 def test_postgis_nearest_node_matches_osmnx_for_twenty_points(small_graph):
@@ -276,24 +277,20 @@ def test_persist_graph_commits_each_batch_and_stores_only_routing_attributes(
     assert all(set(attrs) <= {"highway", "maxspeed", "lanes", "toll", "junction", "name", "oneway"} for attrs in stored)
 
 
-def test_corridor_graph_filters_nodes_near_the_trip_line(small_graph):
+def test_corridor_graph_selects_nodes_near_the_trip_line_then_their_edges(small_graph):
     from route_optimizer.graph.spatial_store import corridor_bbox, load_corridor_graph
 
     seen = []
 
     class Result:
+        def __init__(self, rows):
+            self.rows = rows
+
         def mappings(self):
             return self
 
         def all(self):
-            nodes = small_graph.nodes
-            return [
-                {"u": u, "v": v, "key": k, "length_m": d["length"],
-                 "highway": d["highway"], "attrs": {},
-                 "u_x": nodes[u]["x"], "u_y": nodes[u]["y"],
-                 "v_x": nodes[v]["x"], "v_y": nodes[v]["y"]}
-                for u, v, k, d in small_graph.edges(keys=True, data=True)
-            ]
+            return self.rows
 
     class Connection:
         def __enter__(self):
@@ -304,7 +301,16 @@ def test_corridor_graph_filters_nodes_near_the_trip_line(small_graph):
 
         def execute(self, statement, params):
             seen.append((str(statement), params))
-            return Result()
+            if len(seen) == 1:
+                return Result([
+                    {"id": n, "x": a["x"], "y": a["y"]}
+                    for n, a in small_graph.nodes(data=True)
+                ])
+            return Result([
+                {"u": u, "v": v, "key": k, "length_m": d["length"],
+                 "highway": d["highway"], "attrs": {}}
+                for u, v, k, d in small_graph.edges(keys=True, data=True)
+            ])
 
     class Engine:
         def connect(self):
@@ -313,12 +319,15 @@ def test_corridor_graph_filters_nodes_near_the_trip_line(small_graph):
     points = [(13.08, 80.27), (13.04, 80.20)]
     graph = load_corridor_graph(Engine(), points, 2500.0)
 
-    sql, params = seen[0]
     assert graph.number_of_edges() == small_graph.number_of_edges()
-    assert params["path_wkt"] == "LINESTRING(80.27 13.08, 80.2 13.04)"
-    assert params["buffer_m"] == 2500.0
-    assert "&& ST_MakeEnvelope" in sql and "MATERIALIZED" in sql
-    assert "e.geom::geography" not in sql
+    assert all("x" in d and "y" in d for _, d in graph.nodes(data=True))
+    node_sql, node_params = seen[0]
+    edge_sql, edge_params = seen[1]
+    assert node_params["path_wkt"] == "LINESTRING(80.27 13.08, 80.2 13.04)"
+    assert node_params["buffer_m"] == 2500.0
+    assert "&& ST_MakeEnvelope" in node_sql and "ST_DWithin" in node_sql
+    assert "= ANY(" in edge_sql and "ST_DWithin" not in edge_sql
+    assert "JOIN" not in edge_sql  # no planner-dependent join over the node set
     min_lon, min_lat, max_lon, max_lat = corridor_bbox(points, 2500.0)
     assert min_lon < 80.2 and max_lon > 80.27 and min_lat < 13.04 and max_lat > 13.08
 

@@ -33,6 +33,14 @@ def create_app(config_name='development'):
             db_url = 'postgresql+psycopg2://' + db_url[len(legacy):]
             break
     app.config['SQLALCHEMY_DATABASE_URI'] = db_url
+    if db_url.startswith('postgresql'):
+        # One sync gunicorn worker serves everything, so a runaway query would
+        # freeze the whole service (and Render's proxy drops the response, which
+        # the browser reports as a CORS error). Fail it after 60 s instead.
+        app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+            'pool_pre_ping': True,
+            'connect_args': {'options': '-c statement_timeout=60000'},
+        }
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['MIGRATIONS_DIR'] = os.path.abspath(
         os.path.join(os.path.dirname(__file__), '..', 'migrations')

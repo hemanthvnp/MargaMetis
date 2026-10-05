@@ -103,3 +103,13 @@ def test_postgres_urls_pin_the_psycopg2_driver(monkeypatch, url):
     app = create_app("testing")
 
     assert app.config["SQLALCHEMY_DATABASE_URI"] == "postgresql+psycopg2://u:p@host:5432/db"
+
+
+def test_postgres_engine_gets_a_statement_timeout(monkeypatch):
+    """A runaway query must fail fast: one sync worker serves all requests."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@host:5432/db")
+    from app import create_app
+
+    options = create_app("testing").config["SQLALCHEMY_ENGINE_OPTIONS"]
+
+    assert "statement_timeout=60000" in options["connect_args"]["options"]
