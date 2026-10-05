@@ -1,6 +1,9 @@
 Flask>=3.0.0
 Flask-CORS>=4.0.0
 Flask-SQLAlchemy>=3.0.0
+Flask-Migrate>=4.0.0
+alembic>=1.13.0
+geoalchemy2>=0.15.0
 pymysql>=1.1.0
 psycopg2-binary>=2.9.0
 osmnx>=2.0.7

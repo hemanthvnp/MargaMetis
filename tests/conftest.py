@@ -120,9 +120,12 @@ def flask_app(monkeypatch):
     monkeypatch.setenv("TRUSTED_PROXY_COUNT", "1")
 
     from app import create_app
+    from flask_migrate import upgrade
 
     app = create_app("testing")
     app.config["TESTING"] = True
+    with app.app_context():
+        upgrade(directory=app.config["MIGRATIONS_DIR"])
     yield app
 
     try:

@@ -1,17 +1,18 @@
 services:
 
-  mysql:
-    image: mysql:8.0
+  postgres:
+    image: postgis/postgis:16-3.4
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: password
-      MYSQL_DATABASE: margametis
+      POSTGRES_USER: margametis
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-margametis}
+      POSTGRES_DB: margametis
     ports:
-      - "3307:3306"
+      - "5432:5432"
     volumes:
-      - mysql_data:/var/lib/mysql
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-ppassword"]
+      test: ["CMD-SHELL", "pg_isready -U margametis -d margametis"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -36,16 +37,17 @@ services:
     ports:
       - "5050:5000"
     environment:
-      DATABASE_URL: mysql+pymysql://root:password@mysql:3306/margametis
+      DATABASE_URL: postgresql+psycopg2://margametis:${POSTGRES_PASSWORD:-margametis}@postgres:5432/margametis
       SECRET_KEY: margametis-dev-secret
       FLASK_ENV: development
+      TRUSTED_PROXY_COUNT: 0
       GROQ_API_KEY: ${GROQ_API_KEY:-}
     volumes:
       - graph_cache:/app/backend/graph_cache
       - route_cache:/app/backend/cache
       - logs:/app/logs
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
 
   frontend:
@@ -61,7 +63,7 @@ services:
       - backend
 
 volumes:
-  mysql_data:
+  postgres_data:
   graph_cache:
   route_cache:
   logs:
