@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, session
+from flask import Blueprint, request, jsonify, session, has_app_context
 import logging
 import os
 import time
@@ -16,6 +16,7 @@ from route_optimizer.speed_model import (
     estimate_path_eta_minutes,
     vehicle_speed_kmh,
 )
+from route_optimizer.graph.spatial_store import nearest_spatial_node
 from app.models import db, User, SearchHistory
 from app import cache as redis_cache
 
@@ -35,6 +36,15 @@ def get_optimizer():
 
 def _route_eta_minutes(graph, route, time_of_day=None):
     return estimate_path_eta_minutes(graph, route["path"], time_of_day)
+
+
+def _nearest_graph_node(graph, coordinates):
+    lat, lon = coordinates
+    if has_app_context() and db.engine.dialect.name == "postgresql":
+        node_id = nearest_spatial_node(db.engine, graph.nodes, lon, lat)
+        if node_id is not None:
+            return node_id
+    return ox.distance.nearest_nodes(graph, lon, lat)
 
 
 def _save_history(origin, destination, route_type, vehicle_type, payload):
@@ -287,8 +297,8 @@ def smart_route():
         except Exception as graph_err:
             return jsonify({"error": f"Graph loading failed: {graph_err}"}), 400
 
-        origin_node = ox.distance.nearest_nodes(opt.graph, origin_coords[1], origin_coords[0])
-        dest_node = ox.distance.nearest_nodes(opt.graph, dest_coords[1], dest_coords[0])
+        origin_node = _nearest_graph_node(opt.graph, origin_coords)
+        dest_node = _nearest_graph_node(opt.graph, dest_coords)
 
         # Build cost function
         cost_fn = CostFunctionGenerator(constraints).generate(opt.graph)
@@ -297,7 +307,7 @@ def smart_route():
         # Waypoint routing: chain origin → wp1 → wp2 → … → destination
         if waypoint_coords_list:
             wp_nodes = [
-                ox.distance.nearest_nodes(opt.graph, wc[1], wc[0])
+                _nearest_graph_node(opt.graph, wc)
                 for wc in waypoint_coords_list
             ]
             if wp_nodes:
@@ -464,8 +474,8 @@ def benchmark_route():
         except Exception as graph_err:
             return jsonify({"error": f"Graph loading failed: {graph_err}"}), 400
 
-        origin_node = ox.distance.nearest_nodes(opt.graph, origin_coords[1], origin_coords[0])
-        dest_node = ox.distance.nearest_nodes(opt.graph, dest_coords[1], dest_coords[0])
+        origin_node = _nearest_graph_node(opt.graph, origin_coords)
+        dest_node = _nearest_graph_node(opt.graph, dest_coords)
 
         engine = GraphEngine(opt.graph)
         results = engine.benchmark(origin_node, dest_node)

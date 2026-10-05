@@ -1,9 +1,13 @@
+import math
+
 import pytest
+import osmnx as ox
 
 from route_optimizer.graph.spatial_store import (
     bbox_from_center,
     graph_from_rows,
     load_spatial_graph,
+    nearest_spatial_node,
     persist_graph,
 )
 from route_optimizer.intelligence.graph_engine import GraphEngine
@@ -124,6 +128,65 @@ def test_spatial_queries_use_indexable_bbox_and_metric_distance(small_graph):
         assert "ST_DWithin" in sql
         assert params["lon"] == 80.5
         assert params["lat"] == 13.5
+
+
+def test_postgis_nearest_node_matches_osmnx_for_twenty_points(small_graph):
+    class Result:
+        def __init__(self, node_id):
+            self.node_id = node_id
+
+        def scalar_one_or_none(self):
+            return self.node_id
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def execute(self, statement, params):
+            sql = str(statement)
+            assert "ORDER BY geom::geography" in sql
+            assert "<-> ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography" in sql
+            assert "id = ANY(CAST(:node_ids AS BIGINT[]))" in sql
+            assert params["node_ids"] == list(small_graph.nodes)
+            assert -180 <= params["lon"] <= 180
+            assert -90 <= params["lat"] <= 90
+
+            def distance(node_id):
+                node = small_graph.nodes[node_id]
+                lat1, lat2 = math.radians(node["y"]), math.radians(params["lat"])
+                delta_lat = lat2 - lat1
+                delta_lon = math.radians(params["lon"] - node["x"])
+                haversine = (
+                    math.sin(delta_lat / 2) ** 2
+                    + math.cos(lat1) * math.cos(lat2)
+                    * math.sin(delta_lon / 2) ** 2
+                )
+                return haversine
+
+            return Result(min(
+                small_graph.nodes,
+                key=distance,
+            ))
+
+    class Engine:
+        def connect(self):
+            return Connection()
+
+    points = [
+        (
+            13.080 + index * 0.0007,
+            80.268 + index * 0.0011,
+        )
+        for index in range(20)
+    ]
+    for lat, lon in points:
+        expected = ox.distance.nearest_nodes(small_graph, lon, lat)
+        assert nearest_spatial_node(
+            Engine(), small_graph.nodes, lon, lat
+        ) == expected
 
 
 def test_graph_ingestion_batches_and_ignores_conflicting_osm_ids(

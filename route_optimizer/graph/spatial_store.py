@@ -105,6 +105,31 @@ def load_spatial_graph(engine, bbox, center_point, radius_m) -> nx.MultiDiGraph:
     return graph_from_rows(node_rows, edge_rows)
 
 
+def nearest_spatial_node(
+    engine, candidate_node_ids: Iterable[int], lon: float, lat: float
+) -> int | None:
+    node_ids = [int(node_id) for node_id in candidate_node_ids]
+    if not node_ids:
+        return None
+
+    query = text(
+        """
+        SELECT id
+        FROM osm_nodes
+        WHERE id = ANY(CAST(:node_ids AS BIGINT[]))
+        ORDER BY geom::geography
+                 <-> ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography
+        LIMIT 1
+        """
+    )
+    with engine.connect() as connection:
+        node_id = connection.execute(
+            query,
+            {"node_ids": node_ids, "lon": lon, "lat": lat},
+        ).scalar_one_or_none()
+    return int(node_id) if node_id is not None else None
+
+
 def persist_graph(connection, graph: nx.MultiDiGraph, batch_size: int = 1000) -> None:
     if batch_size < 1:
         raise ValueError("batch_size must be greater than zero")
