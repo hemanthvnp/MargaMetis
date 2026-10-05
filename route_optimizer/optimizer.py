@@ -7,10 +7,9 @@ import networkx as nx
 from .config.models import RouteConfig
 from .graph.manager import GraphManager
 from .intelligence.graph_engine import GraphEngine
+from .speed_model import vehicle_speed_kmh
 
 logger = logging.getLogger(__name__)
-
-_AVG_SPEED_KMPH = {"car": 40, "bike": 25, "bus": 30, "truck": 25, "auto": 35}
 
 _PRESETS = {
     "fuel": {
@@ -67,7 +66,7 @@ class RouteOptimizer:
         if result["path"] is None:
             raise ValueError("No path found between these locations.")
 
-        speed = _AVG_SPEED_KMPH.get(vehicle_type, 40)
+        speed = vehicle_speed_kmh(vehicle_type)
         eta_min = round((result["distance"] / 1000 / speed) * 60, 2)
 
         return {

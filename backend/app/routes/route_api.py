@@ -12,6 +12,7 @@ from route_optimizer.intelligence.constraint_engine import ConstraintEngine
 from route_optimizer.intelligence.cost_function import CostFunctionGenerator
 from route_optimizer.intelligence.route_ranker import RouteRanker
 from route_optimizer.confidence_scorer import RouteConfidenceScorer
+from route_optimizer.speed_model import peak_hour_multiplier, vehicle_speed_kmh
 from app.models import db, User, SearchHistory
 from app import cache as redis_cache
 
@@ -32,7 +33,7 @@ def get_optimizer():
 def _save_history(origin, destination, route_type, vehicle_type, payload):
     try:
         db.session.rollback()
-        username = session.get('username') or request.headers.get('X-Username')
+        username = session.get('username')
         user_id = None
         if username:
             user = User.query.filter_by(username=username).first()
@@ -132,13 +133,12 @@ def calculate_route():
                 for n in result["path"]
             ]
 
-            _AVG_SPEED = {"car": 40, "bike": 25, "bus": 30, "truck": 25, "auto": 35}
             try:
                 scorer = RouteConfidenceScorer(optimizer_instance.graph)
                 conf = scorer.score(
                     result["path"],
                     departure_hour=time_of_day,
-                    avg_speed_kmh=_AVG_SPEED.get(vehicle_type, 40),
+                    avg_speed_kmh=vehicle_speed_kmh(vehicle_type),
                 )
                 confidence_data = {
                     "score":      conf.confidence,
@@ -347,7 +347,7 @@ def smart_route():
             _speed = _hw_speed.get(_hw, 40)
             _tod = constraints.get("time_of_day") or 12
             _base = (dist / 1000 / _speed) * 60
-            _base *= 1.4 if _tod in _peak else (1.15 if 10 <= _tod <= 16 else 1.0)
+            _base *= peak_hour_multiplier(_tod)
             _base *= 1 + (1 - s.get("safety", 0.5)) * 0.3
             eta = round(max(_base, 0.5), 1)
 

@@ -43,17 +43,36 @@ class RouteRanker:
         self.graph = graph
 
     @staticmethod
+    def _edge_overlap(route_a: Dict, route_b: Dict) -> float:
+        path_a = route_a.get("path", [])
+        path_b = route_b.get("path", [])
+        if not path_a or not path_b:
+            return 0.0
+        edges_a = {(min(u, v), max(u, v)) for u, v in zip(path_a, path_a[1:])}
+        edges_b = {(min(u, v), max(u, v)) for u, v in zip(path_b, path_b[1:])}
+        if not edges_a or not edges_b:
+            return 0.0
+        union = edges_a | edges_b
+        if not union:
+            return 0.0
+        return len(edges_a & edges_b) / len(union)
+
+    @staticmethod
     def _deduplicate(routes: List[Dict]) -> List[Dict]:
-        # Drop routes within 3% distance AND 2% composite of an already-kept route
         kept: List[Dict] = []
         for r in routes:
-            dist_r = r.get("distance", 0)
-            comp_r = r.get("scores", {}).get("composite", 0)
-            is_dup = any(
-                dist_r > 0 and abs(dist_r - k.get("distance", 0)) / dist_r < 0.03
-                and abs(comp_r - k.get("scores", {}).get("composite", 0)) < 0.02
-                for k in kept
-            )
+            dist_r = float(r.get("distance", 0) or 0)
+            comp_r = float(r.get("scores", {}).get("composite", 0) or 0)
+            is_dup = False
+            for k in kept:
+                dist_k = float(k.get("distance", 0) or 0)
+                comp_k = float(k.get("scores", {}).get("composite", 0) or 0)
+                distance_similar = dist_r > 0 and dist_k > 0 and abs(dist_r - dist_k) / max(dist_r, dist_k) < 0.03
+                composite_similar = abs(comp_r - comp_k) < 0.02
+                overlap = RouteRanker._edge_overlap(r, k)
+                if (distance_similar and composite_similar) or overlap > 0.70:
+                    is_dup = True
+                    break
             if not is_dup:
                 kept.append(r)
         return kept

@@ -46,6 +46,8 @@ import statistics
 from dataclasses import dataclass, field
 from typing import Optional
 
+from route_optimizer.intelligence.cost_function import ROAD_QUALITY
+
 
 # ─────────────────────────────────────────────
 # Data class for a clean result object
@@ -72,30 +74,6 @@ class ConfidenceResult:
             f"Warnings: {', '.join(self.warnings) if self.warnings else 'None'}"
         )
 
-
-# ─────────────────────────────────────────────
-# Road type rankings
-# Higher number = more reliable road
-# ─────────────────────────────────────────────
-
-ROAD_QUALITY = {
-    'motorway':       100,
-    'motorway_link':  90,
-    'trunk':          88,
-    'trunk_link':     80,
-    'primary':        82,
-    'primary_link':   75,
-    'secondary':      70,
-    'secondary_link': 62,
-    'tertiary':       55,
-    'tertiary_link':  48,
-    'unclassified':   38,
-    'residential':    30,
-    'living_street':  20,
-    'service':        15,
-    'track':          10,
-    'path':           5,
-}
 
 # Rush hours — confidence penalty applies
 RUSH_HOUR_MORNING = range(7, 10)   # 7am–9am
@@ -296,8 +274,7 @@ class RouteConfidenceScorer:
             v = route_nodes[i + 1]
             edge_data = self.graph.get_edge_data(u, v)
             if edge_data:
-                # OSMnx stores parallel edges as 0, 1, 2... — take first
-                data = edge_data.get(0, {})
+                data = min(edge_data.values(), key=lambda d: float(d.get("length", float("inf"))))
                 edges.append((u, v, data))
         return edges
 

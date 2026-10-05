@@ -1,5 +1,26 @@
 from typing import Any, Callable, Dict, List
 
+from route_optimizer.speed_model import peak_hour_multiplier, parse_road_speed_kmh
+
+ROAD_QUALITY: Dict[str, float] = {
+    "motorway": 100.0,
+    "motorway_link": 90.0,
+    "trunk": 88.0,
+    "trunk_link": 80.0,
+    "primary": 82.0,
+    "primary_link": 75.0,
+    "secondary": 70.0,
+    "secondary_link": 62.0,
+    "tertiary": 55.0,
+    "tertiary_link": 48.0,
+    "unclassified": 38.0,
+    "residential": 30.0,
+    "living_street": 20.0,
+    "service": 15.0,
+    "track": 10.0,
+    "path": 5.0,
+}
+
 # Speed limits used when the edge has no maxspeed tag
 _SPEED_KMPH: Dict[str, float] = {
     "motorway": 100.0, "motorway_link": 80.0,
@@ -70,15 +91,7 @@ def _highway(data: Dict) -> str:
 
 
 def _parse_speed(data: Dict) -> float:
-    ms = data.get("maxspeed")
-    if ms:
-        try:
-            s = str(ms).replace(" mph", "").replace(" kph", "").replace(" km/h", "").strip()
-            v = float(s.split(";")[0])
-            return v * 1.609344 if "mph" in str(ms) else v
-        except (ValueError, AttributeError):
-            pass
-    return _SPEED_KMPH.get(_highway(data), _DEFAULT_SPEED)
+    return parse_road_speed_kmh(data)
 
 
 def _is_toll(data: Dict) -> bool:
@@ -111,11 +124,13 @@ class CostFunctionGenerator:
         self.weights = _normalize_weights(filled)
         self.avoid: List[str] = [a.lower() for a in constraints.get("avoid", [])]
         self.prefer: List[str] = [p.lower() for p in constraints.get("prefer", [])]
+        self.time_of_day = constraints.get("time_of_day")
 
     def generate(self) -> Callable:
         weights = self.weights
         avoid   = self.avoid
         prefer  = self.prefer
+        peak_multiplier = peak_hour_multiplier(self.time_of_day)
 
         def cost_fn(u: int, v: int, data: Dict) -> float:
             length = float(data.get("length", 1.0))
@@ -151,6 +166,7 @@ class CostFunctionGenerator:
             # Speed: time to traverse in seconds, scaled back to metre-equivalent
             speed_ms = _parse_speed(data) / 3.6
             speed_component = (length / speed_ms if speed_ms > 0 else length * 10.0) * 40.0
+            peak_penalty = 1.0 + max(0.0, peak_multiplier - 1.0)
 
             safety_component  = (1.0 - _SAFETY.get(hw, _DEFAULT_SAFETY)) * length
 
@@ -162,13 +178,25 @@ class CostFunctionGenerator:
             comfort_component = (1.0 - _COMFORT.get(hw, _DEFAULT_COMFORT)) * length
             cost_component    = (length * 2.0 if _is_toll(data) else 0.0) + length * 0.1
 
+            turn_penalty = 0.0
+            if data.get("junction") in {"roundabout", "traffic_signals", "signal"}:
+                turn_penalty += length * 0.12
+            if hw in {"residential", "unclassified", "service", "living_street"} and data.get("lanes"):
+                try:
+                    lanes = float(str(data.get("lanes")).split(";")[0])
+                    if lanes <= 2:
+                        turn_penalty += length * 0.08
+                except (TypeError, ValueError):
+                    pass
+
             total = (
-                weights["speed"]           * speed_component
+                weights["speed"]           * speed_component * peak_penalty
                 + weights["safety"]        * safety_component
                 + weights["fuel_efficiency"]* fuel_component
                 + weights["scenic"]        * scenic_component
                 + weights["comfort"]       * comfort_component
                 + weights["cost"]          * cost_component
+                + 0.5 * weights["comfort"] * turn_penalty
             )
             return total * prefer_mult
 
