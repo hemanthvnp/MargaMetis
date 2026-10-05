@@ -29,7 +29,7 @@ Flask REST API  ──→  Redis  (geocode cache 24h, route cache 1h)
       │
       ▼
 RouteOptimizer
-  ├── GraphManager          — OSMnx graph download + GraphML disk cache
+  ├── GraphManager          — PostGIS spatial graph reads + OSMnx/GraphML fallback
   └── route_optimizer/intelligence/
         ├── graph_engine.py     — Dijkstra / A* / Bidirectional A* / Yen's K-Shortest
         ├── cost_function.py    — (u, v, data) → float callable, injected at traversal
@@ -79,7 +79,7 @@ docker compose up -d --build
 # → http://localhost:3030
 ```
 
-The local Compose database is PostGIS. The backend applies Alembic migrations before Gunicorn starts. A direct non-Docker development run defaults to SQLite; SQLite supports the non-spatial application features, while spatial graph queries are available only with PostGIS.
+The local Compose database is PostGIS. The backend applies Alembic migrations before Gunicorn starts. A direct non-Docker development run defaults to SQLite; SQLite supports non-spatial features and continues to load/download OSMnx GraphML graphs, while PostGIS-only spatial queries and analytics are unavailable.
 
 ### Database migrations
 
@@ -103,6 +103,19 @@ flask --app wsgi db stamp 20261005_0001
 ```
 
 Do this only after confirming that the deployed tables match the baseline migration. New or empty databases should use `db upgrade` instead.
+
+### Spatial road network
+
+The PostGIS road store contains `osm_nodes` and `osm_edges`, with point/line geometries in SRID 4326, GiST geometry indexes, and btree topology indexes. Graph requests use a spatial bounding-box filter plus geography-distance filtering, then construct a request graph with OSM edge tags restored from `attrs`. When an area is missing, the backend uses an existing GraphML cache or the normal OSMnx/Overpass download path and persists the graph to PostGIS; PostGIS requests do not create one GraphML file per request.
+
+To seed the database from the baked Chennai graph and all cached graphs, first apply migrations, then run from the repository root:
+
+```powershell
+$env:DATABASE_URL = "postgresql+psycopg2://margametis:<password>@localhost:5432/margametis"
+python scripts/ingest_graphs.py
+```
+
+The ingestion is safe to rerun: OSM node IDs and `(u, v, key)` edges use `ON CONFLICT DO NOTHING`. If `chennai_central.graphml` is not present, the script reports that and ingests any `graph_cache/*.graphml` files it finds; it exits with an error if no graph inputs are available. Pass repeated `--graph <path>` options to ingest specific GraphML files.
 
 ## Stack
 
@@ -142,7 +155,7 @@ MargaMetis/
 │   │   ├── cost_function.py     ← dynamic cost callable
 │   │   ├── constraint_engine.py ← Groq LLM + rule-based fallback
 │   │   └── route_ranker.py      ← label + explanation
-│   ├── graph/manager.py         ← OSMnx + GraphML cache
+│   ├── graph/manager.py         ← PostGIS spatial reads + download/cache fallback
 │   └── optimizer.py
 ├── backend/
 │   └── app/
@@ -156,6 +169,7 @@ MargaMetis/
 │   ├── unit/ smoke/ integration/ spec/ e2e/
 │   └── conftest.py               ← shared fixtures (synthetic graph, Flask client, Redis check)
 ├── scripts/run_benchmark.py      ← regenerates benchmarks/results_*.json (the numbers above)
+├── scripts/ingest_graphs.py     ← idempotent GraphML → PostGIS import
 ├── benchmarks/results_*.json
 ├── docker-compose.yml
 └── render.yaml / railway.toml

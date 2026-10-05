@@ -1,6 +1,8 @@
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
-from sqlalchemy import func
+from geoalchemy2 import Geometry
+from sqlalchemy import BigInteger, Float, Index, Integer, String, UniqueConstraint, func
+from sqlalchemy.dialects.postgresql import JSONB
 
 db = SQLAlchemy()
 
@@ -37,6 +39,37 @@ class SearchHistory(db.Model):
     created_at         = db.Column(db.DateTime, server_default=func.now(), nullable=False)
 
     user = db.relationship('User', backref=db.backref('searches', lazy=True))
+
+
+class OSMNode(db.Model):
+    __tablename__ = 'osm_nodes'
+
+    id = db.Column(BigInteger, primary_key=True)
+    geom = db.Column(Geometry(geometry_type='POINT', srid=4326, spatial_index=False), nullable=False)
+
+    __table_args__ = (
+        Index('idx_osm_nodes_geom', 'geom', postgresql_using='gist'),
+    )
+
+
+class OSMEdge(db.Model):
+    __tablename__ = 'osm_edges'
+
+    id = db.Column(BigInteger, primary_key=True, autoincrement=True)
+    u = db.Column(BigInteger, nullable=False)
+    v = db.Column(BigInteger, nullable=False)
+    key = db.Column(Integer, nullable=False)
+    length_m = db.Column(Float, nullable=False)
+    highway = db.Column(String(80), nullable=False)
+    geom = db.Column(Geometry(geometry_type='LINESTRING', srid=4326, spatial_index=False), nullable=False)
+    attrs = db.Column(JSONB, nullable=False, default=dict)
+
+    __table_args__ = (
+        UniqueConstraint('u', 'v', 'key', name='uq_osm_edges_u_v_key'),
+        Index('idx_osm_edges_geom', 'geom', postgresql_using='gist'),
+        Index('idx_osm_edges_u', 'u'),
+        Index('idx_osm_edges_v', 'v'),
+    )
 
 
 def add_user(username, password, role='user'):

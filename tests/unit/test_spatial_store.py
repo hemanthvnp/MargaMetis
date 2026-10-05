@@ -1,0 +1,153 @@
+import pytest
+
+from route_optimizer.graph.spatial_store import (
+    bbox_from_center,
+    graph_from_rows,
+    load_spatial_graph,
+    persist_graph,
+)
+from route_optimizer.intelligence.graph_engine import GraphEngine
+
+
+pytestmark = pytest.mark.unit
+
+
+def test_spatial_graph_assembly_preserves_graphml_route_and_attributes(small_graph):
+    node_rows = [
+        {"id": node, "x": attrs["x"], "y": attrs["y"]}
+        for node, attrs in small_graph.nodes(data=True)
+    ]
+    edge_rows = []
+    for u, v, key, attrs in small_graph.edges(keys=True, data=True):
+        edge_rows.append({
+            "u": u,
+            "v": v,
+            "key": key,
+            "length_m": attrs["length"],
+            "highway": attrs["highway"],
+            "attrs": dict(attrs),
+            "geometry_geojson": None,
+            "u_x": small_graph.nodes[u]["x"],
+            "u_y": small_graph.nodes[u]["y"],
+            "v_x": small_graph.nodes[v]["x"],
+            "v_y": small_graph.nodes[v]["y"],
+        })
+
+    spatial_graph = graph_from_rows(node_rows, edge_rows)
+    source_route = GraphEngine(small_graph).astar(1, 6)
+    spatial_route = GraphEngine(spatial_graph).astar(1, 6)
+
+    assert spatial_route["path"] == source_route["path"]
+    assert spatial_route["distance"] == pytest.approx(source_route["distance"])
+    assert spatial_graph[1][2][0]["maxspeed"] == "60"
+    assert spatial_graph[2][3][0]["toll"] == "yes"
+
+
+def test_spatial_graph_assembly_preserves_multivalue_highway_attribute():
+    graph = graph_from_rows(
+        [],
+        [{
+            "u": 1,
+            "v": 2,
+            "key": 0,
+            "length_m": 100,
+            "highway": "primary",
+            "attrs": {"highway": ["primary", "secondary"]},
+            "geometry_geojson": None,
+            "u_x": 80.0,
+            "u_y": 13.0,
+            "v_x": 80.1,
+            "v_y": 13.1,
+        }],
+    )
+
+    assert graph[1][2][0]["highway"] == ["primary", "secondary"]
+
+
+def test_bbox_uses_lon_lat_order_and_city_scale_meters():
+    min_lon, min_lat, max_lon, max_lat = bbox_from_center((13.0, 80.0), 1000)
+
+    assert min_lon < 80.0 < max_lon
+    assert min_lat < 13.0 < max_lat
+    assert max_lon - min_lon > max_lat - min_lat
+
+
+def test_spatial_queries_use_indexable_bbox_and_metric_distance(small_graph):
+    class Result:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self.rows
+
+    class Connection:
+        def __init__(self):
+            self.statements = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def execute(self, statement, params):
+            self.statements.append((str(statement), params))
+            if len(self.statements) == 1:
+                return Result([
+                    {"id": node, "x": attrs["x"], "y": attrs["y"]}
+                    for node, attrs in small_graph.nodes(data=True)
+                ])
+            return Result([])
+
+    class Engine:
+        def __init__(self):
+            self.connection = Connection()
+
+        def connect(self):
+            return self.connection
+
+    engine = Engine()
+    graph = load_spatial_graph(
+        engine,
+        bbox=(80.0, 13.0, 81.0, 14.0),
+        center_point=(13.5, 80.5),
+        radius_m=1000,
+    )
+
+    assert graph.number_of_edges() == 0
+    assert len(engine.connection.statements) == 2
+    for sql, params in engine.connection.statements:
+        assert "&& ST_MakeEnvelope" in sql
+        assert "ST_DWithin" in sql
+        assert params["lon"] == 80.5
+        assert params["lat"] == 13.5
+
+
+def test_graph_ingestion_batches_and_ignores_conflicting_osm_ids(
+    small_graph, monkeypatch
+):
+    from psycopg2 import extras
+
+    statements = []
+
+    def capture_values(_cursor, sql, rows, template=None):
+        statements.append((sql, list(rows)))
+
+    monkeypatch.setattr(extras, "execute_values", capture_values)
+
+    class Connection:
+        def cursor(self):
+            class Cursor:
+                def close(self):
+                    pass
+
+            return Cursor()
+
+    persist_graph(Connection(), small_graph, batch_size=1)
+
+    assert len(statements) == small_graph.number_of_nodes() + small_graph.number_of_edges()
+    assert all("DO NOTHING" in sql for sql, _ in statements)
+    assert all(len(rows) == 1 for _, rows in statements)
