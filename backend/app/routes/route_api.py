@@ -155,7 +155,10 @@ def calculate_route():
             )
 
             optimizer_instance = get_optimizer()
-            optimizer_instance.load_graph(center_point=mid_point, radius_m=graph_radius)
+            optimizer_instance.load_graph(
+                center_point=mid_point, radius_m=graph_radius,
+                route_points=[origin_coords, dest_coords],
+            )
 
             start_time = time.time()
             result = optimizer_instance.find_route(
@@ -237,7 +240,10 @@ def _load_graph_for_coords(origin_coords, dest_coords, extra_coords=None):
     graph_radius = max(int(max_dist * 1.5), 3000)
 
     opt = get_optimizer()
-    opt.load_graph(center_point=mid_point, radius_m=graph_radius)
+    opt.load_graph(
+        center_point=mid_point, radius_m=graph_radius,
+        route_points=[origin_coords, *(extra_coords or []), dest_coords],
+    )
     return opt
 
 

@@ -1,5 +1,5 @@
 import logging
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import osmnx as ox
 import networkx as nx
@@ -38,9 +38,14 @@ class RouteOptimizer:
         self.graph_manager = GraphManager(self.config)
         self.graph: Optional[nx.MultiDiGraph] = None
 
-    def load_graph(self, center_point: Tuple[float, float], radius_m: int) -> None:
+    def load_graph(
+        self,
+        center_point: Tuple[float, float],
+        radius_m: int,
+        route_points: Optional[List[Tuple[float, float]]] = None,
+    ) -> None:
         logger.info(f"Loading graph at {center_point}, radius {radius_m}m")
-        self.graph = self.graph_manager.load_graph(center_point, radius_m)
+        self.graph = self.graph_manager.load_graph(center_point, radius_m, route_points)
 
     def find_route(
         self,

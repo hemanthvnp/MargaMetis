@@ -17,7 +17,7 @@ class TestAppFactory:
 
     def test_all_blueprints_registered(self, flask_app):
         names = {bp for bp in flask_app.blueprints}
-        assert names == {"routes", "health", "auth", "admin", "user"}
+        assert names == {"routes", "health", "auth", "admin", "user", "spatial"}
 
 
 class TestHealthEndpoints:
@@ -54,9 +54,8 @@ class TestSmartRouteWired:
         from app.routes import route_api
         from route_optimizer.optimizer import RouteOptimizer
 
-        monkeypatch.setattr(route_api, "optimizer", None)
         monkeypatch.setattr(RouteOptimizer, "load_graph",
-                             lambda self, center_point, radius_m: setattr(self, "graph", tiny_graph))
+                             lambda self, center_point, radius_m, route_points=None: setattr(self, "graph", tiny_graph))
         monkeypatch.setattr(
             route_api.ox, "geocode",
             lambda q: (13.08, 80.27) if "origin" in q.lower() else (13.10, 80.29),

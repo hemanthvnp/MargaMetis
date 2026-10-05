@@ -1,13 +1,15 @@
 import os
 import logging
-from typing import Optional, Tuple
+from typing import Optional, Sequence, Tuple
 
 from flask import current_app, has_app_context
 import osmnx as ox
 import networkx as nx
 
 from ..config.models import RouteConfig
-from .spatial_store import bbox_from_center, load_spatial_graph, persist_graph
+from .spatial_store import (
+    bbox_from_center, load_corridor_graph, load_spatial_graph, persist_graph,
+)
 from ..utils.helpers import haversine_distance_m
 
 logger = logging.getLogger(__name__)
@@ -42,6 +44,13 @@ _OVERPASS_MIRRORS = [
 ox.settings.requests_timeout = 25
 
 
+def corridor_buffer_m(route_points: Sequence[Tuple[float, float]]) -> float:
+    """Half-width of the road corridor around a trip: wide enough for detours
+    and alternatives, bounded so long trips don't balloon the graph."""
+    trip_m = haversine_distance_m(*route_points[0], *route_points[-1])
+    return float(min(max(2000.0, 0.35 * trip_m), 6000.0))
+
+
 class GraphManager:
     # Shared across instances: optimizers are created per request, and each
     # one re-parsing the seed GraphML would multiply its memory cost.
@@ -68,7 +77,12 @@ class GraphManager:
 
         return GraphManager._regional_graph
 
-    def load_graph(self, center_point: Tuple[float, float], radius_m: int) -> nx.MultiDiGraph:
+    def load_graph(
+        self,
+        center_point: Tuple[float, float],
+        radius_m: int,
+        route_points: Optional[Sequence[Tuple[float, float]]] = None,
+    ) -> nx.MultiDiGraph:
         cache_name = f"graph_{center_point[0]:.6f}_{center_point[1]:.6f}_{radius_m}.graphml"
         cache_file = os.path.join(self.config.graph_cache_dir, cache_name)
 
@@ -79,7 +93,9 @@ class GraphManager:
             has_app_context()
             and current_app.extensions["sqlalchemy"].engine.dialect.name == "postgresql"
         ):
-            return self._load_postgis_graph(center_point, radius_m, cache_file)
+            return self._load_postgis_graph(
+                center_point, radius_m, cache_file, route_points
+            )
 
         seed = self._regional_seed(center_point, radius_m)
         if seed is not None:
@@ -100,10 +116,16 @@ class GraphManager:
         center_point: Tuple[float, float],
         radius_m: int,
         cache_file: str,
+        route_points: Optional[Sequence[Tuple[float, float]]] = None,
     ) -> nx.MultiDiGraph:
         engine = current_app.extensions["sqlalchemy"].engine
-        bbox = bbox_from_center(center_point, radius_m)
-        graph = load_spatial_graph(engine, bbox, center_point, radius_m)
+        if route_points and len(route_points) >= 2:
+            graph = load_corridor_graph(
+                engine, route_points, corridor_buffer_m(route_points)
+            )
+        else:
+            bbox = bbox_from_center(center_point, radius_m)
+            graph = load_spatial_graph(engine, bbox, center_point, radius_m)
         if graph.number_of_edges():
             logger.info(
                 "Loaded request graph from PostGIS: %s nodes, %s edges",

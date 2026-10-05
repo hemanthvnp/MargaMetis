@@ -1,7 +1,7 @@
 import json
 import logging
 import math
-from typing import Iterable, Mapping, Tuple
+from typing import Iterable, Mapping, Sequence, Tuple
 
 import networkx as nx
 from shapely.geometry import LineString
@@ -100,6 +100,56 @@ def load_spatial_graph(engine, bbox, center_point, radius_m) -> nx.MultiDiGraph:
 
     with engine.connect() as connection:
         edge_rows = connection.execute(query, query_params).mappings().all()
+    return graph_from_rows([], edge_rows)
+
+
+def corridor_bbox(
+    points: Sequence[Tuple[float, float]], buffer_m: float
+) -> Tuple[float, float, float, float]:
+    """Bounding box of (lat, lon) points grown by buffer_m on every side."""
+    lats = [lat for lat, _ in points]
+    lons = [lon for _, lon in points]
+    min_lon, min_lat, _, _ = bbox_from_center((min(lats), min(lons)), buffer_m)
+    _, _, max_lon, max_lat = bbox_from_center((max(lats), max(lons)), buffer_m)
+    return min_lon, min_lat, max_lon, max_lat
+
+
+def load_corridor_graph(
+    engine, points: Sequence[Tuple[float, float]], buffer_m: float
+) -> nx.MultiDiGraph:
+    """Request graph for a trip: only roads within buffer_m of the straight
+    path origin -> waypoints -> destination, not a circle around its midpoint.
+
+    A circle of radius 1.5x the trip length covers ~7x the area a corridor does,
+    which on a dense city meant >150k edges and an out-of-memory kill.
+    """
+    min_lon, min_lat, max_lon, max_lat = corridor_bbox(points, buffer_m)
+    wkt_line = "LINESTRING(" + ", ".join(f"{lon} {lat}" for lat, lon in points) + ")"
+    query = text(
+        """
+        WITH path AS (
+            SELECT ST_GeogFromText(CAST(:path_wkt AS TEXT)) AS g
+        ),
+        n AS MATERIALIZED (
+            SELECT id, ST_X(geom) AS x, ST_Y(geom) AS y
+            FROM osm_nodes, path
+            WHERE geom && ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
+              AND ST_DWithin(geom::geography, path.g, :buffer_m)
+        )
+        SELECT e.u, e.v, e.key, e.length_m, e.highway, e.attrs,
+               un.x AS u_x, un.y AS u_y, vn.x AS v_x, vn.y AS v_y
+        FROM n AS un
+        JOIN osm_edges AS e ON e.u = un.id
+        JOIN n AS vn ON vn.id = e.v
+        """
+    )
+    params = {
+        "path_wkt": wkt_line, "buffer_m": buffer_m,
+        "min_lon": min_lon, "min_lat": min_lat,
+        "max_lon": max_lon, "max_lat": max_lat,
+    }
+    with engine.connect() as connection:
+        edge_rows = connection.execute(query, params).mappings().all()
     return graph_from_rows([], edge_rows)
 
 

@@ -34,7 +34,7 @@ def test_concurrent_requests_route_on_their_own_graphs(monkeypatch):
         def __init__(self):
             self.graph = None
 
-        def load_graph(self, center_point, radius_m):
+        def load_graph(self, center_point, radius_m, route_points=None):
             if center_point[0] < 13.5:
                 self.graph = graph_a
                 graph_a_loaded.set()

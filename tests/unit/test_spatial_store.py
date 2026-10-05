@@ -274,3 +274,58 @@ def test_persist_graph_commits_each_batch_and_stores_only_routing_attributes(
     assert connection.commits == 5
     stored = [row[-1].adapted for row in edge_rows]
     assert all(set(attrs) <= {"highway", "maxspeed", "lanes", "toll", "junction", "name", "oneway"} for attrs in stored)
+
+
+def test_corridor_graph_filters_nodes_near_the_trip_line(small_graph):
+    from route_optimizer.graph.spatial_store import corridor_bbox, load_corridor_graph
+
+    seen = []
+
+    class Result:
+        def mappings(self):
+            return self
+
+        def all(self):
+            nodes = small_graph.nodes
+            return [
+                {"u": u, "v": v, "key": k, "length_m": d["length"],
+                 "highway": d["highway"], "attrs": {},
+                 "u_x": nodes[u]["x"], "u_y": nodes[u]["y"],
+                 "v_x": nodes[v]["x"], "v_y": nodes[v]["y"]}
+                for u, v, k, d in small_graph.edges(keys=True, data=True)
+            ]
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def execute(self, statement, params):
+            seen.append((str(statement), params))
+            return Result()
+
+    class Engine:
+        def connect(self):
+            return Connection()
+
+    points = [(13.08, 80.27), (13.04, 80.20)]
+    graph = load_corridor_graph(Engine(), points, 2500.0)
+
+    sql, params = seen[0]
+    assert graph.number_of_edges() == small_graph.number_of_edges()
+    assert params["path_wkt"] == "LINESTRING(80.27 13.08, 80.2 13.04)"
+    assert params["buffer_m"] == 2500.0
+    assert "&& ST_MakeEnvelope" in sql and "MATERIALIZED" in sql
+    assert "e.geom::geography" not in sql
+    min_lon, min_lat, max_lon, max_lat = corridor_bbox(points, 2500.0)
+    assert min_lon < 80.2 and max_lon > 80.27 and min_lat < 13.04 and max_lat > 13.08
+
+
+def test_corridor_buffer_scales_with_trip_length_within_bounds():
+    from route_optimizer.graph.manager import corridor_buffer_m
+
+    assert corridor_buffer_m([(13.0, 80.0), (13.001, 80.0)]) == 2000.0       # tiny trip: floor
+    assert 2500 < corridor_buffer_m([(13.0418, 80.2341), (13.0382, 80.1565)]) < 3500
+    assert corridor_buffer_m([(13.0, 80.0), (11.0, 77.0)]) == 6000.0         # very long: cap

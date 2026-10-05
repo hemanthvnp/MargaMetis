@@ -54,3 +54,38 @@ def test_postgres_never_loads_the_regional_seed_into_memory(monkeypatch, tmp_pat
     monkeypatch.setattr(manager, "_load_postgis_graph", lambda *a, **k: sentinel)
 
     assert manager.load_graph((13.0602, 80.2540), 3000) is sentinel
+
+
+def test_postgres_loads_a_corridor_not_a_circle_when_route_points_are_given(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+
+    engine = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+    monkeypatch.setattr(graph_manager_module, "has_app_context", lambda: True)
+    monkeypatch.setattr(
+        graph_manager_module, "current_app",
+        SimpleNamespace(extensions={"sqlalchemy": SimpleNamespace(engine=engine)}),
+    )
+    import networkx as nx
+
+    graph = nx.MultiDiGraph()
+    graph.add_edge(1, 2, length=1.0)
+    calls = {}
+    monkeypatch.setattr(
+        graph_manager_module, "load_corridor_graph",
+        lambda eng, points, buffer_m: calls.update(points=points, buffer_m=buffer_m) or graph,
+    )
+    monkeypatch.setattr(
+        graph_manager_module, "load_spatial_graph",
+        lambda *a, **k: pytest.fail("a circle query must not run for a routed trip"),
+    )
+    points = [(13.0418, 80.2341), (13.0382, 80.1565)]
+
+    result = GraphManager(RouteConfig(graph_cache_dir=str(tmp_path))).load_graph(
+        (13.035, 80.195), 11984, route_points=points
+    )
+
+    assert result is graph
+    assert calls["points"] == points
+    assert 2500 < calls["buffer_m"] < 3500
