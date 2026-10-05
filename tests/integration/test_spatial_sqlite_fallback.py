@@ -25,8 +25,8 @@ def test_sqlite_keeps_graphml_cache_and_download_fallback(
     manager = GraphManager(RouteConfig(graph_cache_dir=str(tmp_path)))
 
     with flask_app.app_context():
-        first_graph = manager.load_graph((13.08, 80.27), 1000)
-        second_graph = manager.load_graph((13.08, 80.27), 1000)
+        first_graph = manager.load_graph((28.61, 77.21), 1000)
+        second_graph = manager.load_graph((28.61, 77.21), 1000)
 
     assert first_graph.number_of_edges() == small_graph.number_of_edges()
     assert second_graph.number_of_edges() == small_graph.number_of_edges()
