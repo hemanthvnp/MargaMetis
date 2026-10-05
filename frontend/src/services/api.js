@@ -1,16 +1,4 @@
-import axios from 'axios';
-
-const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:5050/api',
-  withCredentials: true,
-  headers: { 'Content-Type': 'application/json' },
-});
-
-api.interceptors.request.use(cfg => {
-  const u = localStorage.getItem('mm_user');
-  if (u) cfg.headers['X-Username'] = u;
-  return cfg;
-});
+import api from './http';
 
 export const routeService = {
   /** Standard mode: fixed route type + vehicle */
