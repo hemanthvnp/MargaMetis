@@ -67,3 +67,29 @@ class TestDeduplication:
         routes = [{"path": [1, 2, 3], "distance": 2000.0}, {"path": [1, 2, 3], "distance": 2000.0}]
         ranked = ranker.rank_routes(routes)
         assert len(ranked) == 1
+
+    def test_edge_jaccard_deduplicates_routes_above_seventy_percent(self):
+        routes = [
+            {
+                "path": [1, 2, 3, 4],
+                "distance": 1000,
+                "scores": {"composite": 0.2},
+            },
+            {
+                "path": [1, 2, 3, 4, 5],
+                "distance": 5000,
+                "scores": {"composite": 0.9},
+            },
+            {
+                "path": [7, 8, 9, 10],
+                "distance": 5000,
+                "scores": {"composite": 0.3},
+            },
+        ]
+
+        deduplicated = RouteRanker._deduplicate(routes)
+
+        assert [route["path"] for route in deduplicated] == [
+            [1, 2, 3, 4],
+            [7, 8, 9, 10],
+        ]
