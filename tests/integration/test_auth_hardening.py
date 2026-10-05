@@ -1,6 +1,7 @@
 import pytest
 
 from app import cache as redis_cache
+from app.models import User
 
 
 pytestmark = pytest.mark.integration
@@ -86,3 +87,34 @@ def test_sixth_auth_attempt_is_limited_and_window_is_not_extended(client, monkey
     ]
     assert list(redis.counts) == ["auth:login:198.51.100.23"]
     assert redis.expirations == [("auth:login:198.51.100.23", 60)]
+
+
+def test_registration_ignores_requested_admin_role(client, flask_app, monkeypatch):
+    class FakeRedis:
+        def incr(self, key):
+            return 1
+
+        def expire(self, key, seconds):
+            return True
+
+    monkeypatch.setattr(redis_cache, "_redis", lambda: FakeRedis())
+    token = client.get("/api/auth/me").get_json()["csrf_token"]
+    response = client.post(
+        "/api/auth/register",
+        json={"username": "role-escalation", "password": "secure-password", "role": "admin"},
+        headers={"X-CSRFToken": token},
+    )
+
+    assert response.status_code == 200
+    with flask_app.app_context():
+        user = User.query.filter_by(username="role-escalation").one()
+        assert user.role == "user"
+
+
+def test_x_username_header_cannot_impersonate_user(client):
+    response = client.get(
+        "/api/user/history",
+        headers={"X-Username": "admin"},
+    )
+
+    assert response.status_code == 401
