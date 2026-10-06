@@ -1,3 +1,19 @@
+# One command runs everything:
+#
+#     docker compose up --build
+#
+# then open http://localhost:3030 (app) and http://localhost:3030/spatial.
+# The first run builds the images and loads the road network and places into
+# PostGIS (a few minutes); later runs start in seconds. Host ports can be moved
+# if they clash with something else, e.g.  BACKEND_PORT=5055 FRONTEND_PORT=3031
+
+x-backend-build: &backend-build
+  context: .
+  dockerfile: backend/Dockerfile
+
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql+psycopg2://margametis:${POSTGRES_PASSWORD:-margametis}@postgres:5432/margametis
+
 services:
 
   postgres:
@@ -8,7 +24,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-margametis}
       POSTGRES_DB: margametis
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -18,11 +34,10 @@ services:
       retries: 10
       start_period: 30s
 
+  # Only the backend talks to Redis, so it needs no host port (6379 is often taken).
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    ports:
-      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -30,17 +45,17 @@ services:
       retries: 5
 
   backend:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
+    build: *backend-build
     restart: unless-stopped
     ports:
-      - "5050:5000"
+      - "${BACKEND_PORT:-5050}:5000"
     environment:
-      DATABASE_URL: postgresql+psycopg2://margametis:${POSTGRES_PASSWORD:-margametis}@postgres:5432/margametis
-      SECRET_KEY: margametis-dev-secret
+      <<: *backend-env
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-margametis-dev-secret}
       FLASK_ENV: development
       TRUSTED_PROXY_COUNT: 0
+      CORS_ORIGINS: http://localhost:${FRONTEND_PORT:-3030}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
     volumes:
       - graph_cache:/app/backend/graph_cache
@@ -49,16 +64,32 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # One-shot: waits for the backend (which applies the migrations on start),
+  # loads the data if the tables are empty, then exits.
+  seed:
+    build: *backend-build
+    restart: "no"
+    healthcheck:
+      disable: true   # one-shot job; the image's web healthcheck does not apply
+    command: ["python", "/app/scripts/seed_local_data.py"]
+    environment:
+      <<: *backend-env
+    depends_on:
+      backend:
+        condition: service_healthy
 
   frontend:
     build:
       context: .
       dockerfile: frontend/Dockerfile
       args:
-        VITE_API_URL: http://localhost:5050/api
+        VITE_API_URL: http://localhost:${BACKEND_PORT:-5050}/api
     restart: unless-stopped
     ports:
-      - "3030:80"
+      - "${FRONTEND_PORT:-3030}:80"
     depends_on:
       - backend
 

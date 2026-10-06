@@ -1,3 +1,4 @@
+import os
 import secrets
 import logging
 from flask import Blueprint, request, jsonify, session
@@ -40,6 +41,11 @@ def _rate_limit_response(key_prefix: str):
                 'error': f'Too many {label} attempts. Please wait a moment.'
             }), 429
     except RuntimeError:
+        # Fail closed by default: without the limiter, logins could be brute
+        # forced. Local development without Redis opts in explicitly.
+        if os.environ.get('AUTH_RATE_LIMIT_FAIL_OPEN') == '1':
+            logger.warning('Auth rate limiter unavailable; allowing request (fail-open)')
+            return None
         return jsonify({'error': 'Authentication rate limiter is unavailable'}), 503
     return None
 

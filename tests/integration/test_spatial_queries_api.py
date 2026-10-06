@@ -110,3 +110,74 @@ def test_distance_requires_both_places(client):
     response = client.get('/api/spatial/distance?from=Chennai')
 
     assert response.status_code == 400
+
+
+_ROUTE = ({'distance_m': 7300.0, 'estimated_time_min': 9.2},
+          [(80.2341, 13.0418), (80.2600, 13.0450), (80.2824, 13.0500)])
+
+
+@pytest.fixture
+def fake_route(postgis_mode, monkeypatch):
+    monkeypatch.setattr(
+        spatial_routes, '_geocode',
+        lambda place: (13.0418, 80.2341) if 'Nagar' in place else (13.05, 80.2824),
+    )
+    monkeypatch.setattr(spatial_routes, '_compute_route', lambda *a: _ROUTE)
+
+
+def test_along_route_reports_postgis_requirement_on_sqlite(client):
+    response = client.get('/api/spatial/along-route?origin=A&destination=B')
+
+    assert response.status_code == 503
+
+
+@pytest.mark.parametrize('query', [
+    'destination=B',
+    'origin=A',
+    'origin=A&destination=B&distance_m=10',
+    'origin=A&destination=B&distance_m=99999',
+    'origin=A&destination=B&category=casino',
+    'origin=A&destination=B&route_type=teleport',
+])
+def test_along_route_rejects_invalid_params(client, fake_route, query):
+    response = client.get(f'/api/spatial/along-route?{query}')
+
+    assert response.status_code == 400
+
+
+def test_along_route_returns_route_and_places_in_travel_order(client, fake_route, monkeypatch):
+    seen = {}
+
+    def fake_places(engine, path, distance_m, category=None, limit=100):
+        seen.update(path=path, distance_m=distance_m, category=category)
+        return [{'name': 'A Hospital', 'category': 'hospital', 'along_m': 400.0,
+                 'distance_from_route_m': 30.0, 'lat': 13.04, 'lon': 80.24,
+                 'osm_type': 'node', 'osm_id': 1, 'attrs': {}}]
+
+    monkeypatch.setattr(spatial_routes.spatial_queries, 'places_along_route', fake_places)
+
+    response = client.get(
+        '/api/spatial/along-route?origin=T Nagar&destination=Marina Beach'
+        '&category=hospital&distance_m=300&route_type=fuel'
+    )
+
+    body = response.get_json()
+    assert response.status_code == 200
+    assert seen == {'path': _ROUTE[1], 'distance_m': 300.0, 'category': 'hospital'}
+    assert body['count'] == 1
+    assert body['route']['distance_m'] == 7300.0
+    assert body['route']['path'][0] == [13.0418, 80.2341]   # [lat, lon] for Leaflet
+    assert body['items'][0]['along_m'] == 400.0
+
+
+def test_along_route_with_no_path_is_a_404(client, postgis_mode, monkeypatch):
+    monkeypatch.setattr(spatial_routes, '_geocode', lambda place: (13.0, 80.0))
+
+    def no_path(*args):
+        raise ValueError('No path found between these locations.')
+
+    monkeypatch.setattr(spatial_routes, '_compute_route', no_path)
+
+    response = client.get('/api/spatial/along-route?origin=A&destination=B')
+
+    assert response.status_code == 404

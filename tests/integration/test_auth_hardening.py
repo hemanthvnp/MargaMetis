@@ -118,3 +118,33 @@ def test_x_username_header_cannot_impersonate_user(client):
     )
 
     assert response.status_code == 401
+
+
+def _login_without_redis(client, monkeypatch):
+    monkeypatch.setattr(redis_cache, "_redis", lambda: None)
+    token = client.get("/api/auth/me").get_json()["csrf_token"]
+    return client.post(
+        "/api/auth/login",
+        json={"username": "missing", "password": "incorrect"},
+        headers={"X-CSRFToken": token},
+    )
+
+
+def test_login_fails_closed_when_the_rate_limiter_backend_is_down(client, monkeypatch):
+    monkeypatch.delenv("AUTH_RATE_LIMIT_FAIL_OPEN", raising=False)
+
+    assert _login_without_redis(client, monkeypatch).status_code == 503
+
+
+def test_fail_open_is_an_explicit_opt_in_for_local_development(client, monkeypatch):
+    monkeypatch.setenv("AUTH_RATE_LIMIT_FAIL_OPEN", "1")
+
+    # reaches the credential check (401) instead of being blocked (503)
+    assert _login_without_redis(client, monkeypatch).status_code == 401
+
+
+def test_redis_unavailable_sentinel_is_returned_as_none(monkeypatch):
+    """A cached 'unavailable' marker must not leak out as False (r.incr crash)."""
+    monkeypatch.setattr(redis_cache, "_client", False)
+
+    assert redis_cache._redis() is None

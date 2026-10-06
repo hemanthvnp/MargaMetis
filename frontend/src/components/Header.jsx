@@ -14,6 +14,10 @@ export const Header = ({ user, onLoginClick, onLogoutClick }) => (
     </Link>
 
     <div className="flex items-center gap-2">
+      <Link to="/spatial"
+        className="text-xs text-gray-600 hover:text-gray-900 px-3 py-1.5 rounded-md hover:bg-gray-100 transition">
+        Spatial
+      </Link>
       {user ? (
         <>
           <Link to="/user"

@@ -6,6 +6,7 @@ import { AuthModal }       from './components/AuthModal';
 import { authService }     from './services/auth';
 import { AdminDashboard }  from './pages/AdminDashboard';
 import { UserDashboard }   from './pages/UserDashboard';
+import { SpatialExplorer } from './pages/SpatialExplorer';
 import './styles/globals.css';
 
 function App() {
@@ -33,6 +34,7 @@ function App() {
         <main className="flex-1 overflow-hidden">
           <Routes>
             <Route path="/" element={<HomePage />} />
+            <Route path="/spatial" element={<SpatialExplorer />} />
             <Route path="/admin"
               element={user?.role === 'admin' ? <AdminDashboard /> : <Navigate to="/" replace />} />
             <Route path="/user"

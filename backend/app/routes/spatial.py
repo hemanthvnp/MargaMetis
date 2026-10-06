@@ -6,6 +6,7 @@ from flask import Blueprint, jsonify, request
 from app import cache as redis_cache
 from app.models import db
 from route_optimizer.graph import spatial_queries
+from route_optimizer.optimizer import RouteOptimizer
 from route_optimizer.utils.helpers import haversine_distance_m
 
 logger = logging.getLogger(__name__)
@@ -13,6 +14,7 @@ logger = logging.getLogger(__name__)
 spatial_bp = Blueprint('spatial', __name__)
 
 _MAX_RADIUS_M = 50_000
+_ROUTE_TYPES = ('shortest', 'fuel', 'green', 'avoid_main')
 
 
 class _BadRequest(ValueError):
@@ -155,3 +157,140 @@ def distance():
             'coordinates': [[lon1, lat1], [lon2, lat2]],
         },
     }), 200
+
+
+def _compute_route(origin, destination, route_type):
+    """Route between two (lat, lon) points on a corridor graph; returns the
+    result dict plus the path as (lon, lat) pairs."""
+    mid = ((origin[0] + destination[0]) / 2, (origin[1] + destination[1]) / 2)
+    trip_m = haversine_distance_m(*origin, *destination)
+    optimizer = RouteOptimizer()
+    optimizer.load_graph(
+        center_point=mid, radius_m=max(int(trip_m * 1.5), 3000),
+        route_points=[origin, destination],
+    )
+    result = optimizer.find_route(origin, destination, route_type, 'car')
+    nodes = optimizer.graph.nodes
+    path = [(nodes[n]['x'], nodes[n]['y']) for n in result['path']]
+    return result, path
+
+
+@spatial_bp.route('/along-route', methods=['GET'])
+def along_route():
+    """Places (hospitals, fuel stations...) within a distance of the route
+    between two named places, in the order you pass them."""
+    if not _spatial_supported():
+        return _unsupported()
+    names = [(request.args.get(k) or '').strip() for k in ('origin', 'destination')]
+    if not all(names):
+        raise _BadRequest("'origin' and 'destination' are required")
+    distance_m = _float_arg('distance_m', 50, 5000) if 'distance_m' in request.args else 500.0
+    category = request.args.get('category')
+    if category and category not in spatial_queries.POI_CATEGORIES:
+        raise _BadRequest(
+            'category must be one of: ' + ', '.join(spatial_queries.POI_CATEGORIES)
+        )
+    route_type = request.args.get('route_type', 'shortest')
+    if route_type not in _ROUTE_TYPES:
+        raise _BadRequest('route_type must be one of: ' + ', '.join(_ROUTE_TYPES))
+    origin, destination = [_geocode_or_400(name) for name in names]
+
+    try:
+        result, path = _compute_route(origin, destination, route_type)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 404
+
+    items = spatial_queries.places_along_route(
+        db.engine, path, distance_m, category=category
+    )
+    return jsonify({
+        'success': True,
+        'origin': {'name': names[0], 'lat': origin[0], 'lon': origin[1]},
+        'destination': {'name': names[1], 'lat': destination[0], 'lon': destination[1]},
+        'route': {
+            'distance_m': result['distance_m'],
+            'estimated_time_min': result['estimated_time_min'],
+            'path': [[lat, lon] for lon, lat in path],
+        },
+        'distance_m': distance_m,
+        'count': len(items),
+        'items': items,
+    }), 200
+
+
+def _parse_points(name, low, high):
+    """'lat,lon;lat,lon;...' query parameter -> [(lat, lon), ...]."""
+    raw = (request.args.get(name) or '').strip()
+    points = []
+    for part in filter(None, (chunk.strip() for chunk in raw.split(';'))):
+        try:
+            lat_text, lon_text = part.split(',')
+            lat, lon = float(lat_text), float(lon_text)
+        except ValueError:
+            raise _BadRequest(f"{name} must look like 'lat,lon;lat,lon'")
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            raise _BadRequest(f'{name} has a coordinate out of range')
+        points.append((lat, lon))
+    if not low <= len(points) <= high:
+        raise _BadRequest(f'{name} needs between {low} and {high} points')
+    return points
+
+
+def _category_arg():
+    category = request.args.get('category')
+    if category and category not in spatial_queries.POI_CATEGORIES:
+        raise _BadRequest(
+            'category must be one of: ' + ', '.join(spatial_queries.POI_CATEGORIES)
+        )
+    return category
+
+
+_MAX_AREA_KM2 = 500.0
+
+
+@spatial_bp.route('/within-area', methods=['GET'])
+def within_area():
+    """Places inside a polygon, plus its area and most central place."""
+    if not _spatial_supported():
+        return _unsupported()
+    points = _parse_points('polygon', 3, 50)
+    category = _category_arg()
+
+    result = spatial_queries.places_in_area(
+        db.engine, [(lon, lat) for lat, lon in points], category=category
+    )
+    if result is None:
+        raise _BadRequest('polygon must not cross itself')
+    if result['area_km2'] > _MAX_AREA_KM2:
+        raise _BadRequest(f'polygon is too large (limit {_MAX_AREA_KM2:.0f} km2)')
+    return jsonify({
+        'success': True, 'count': len(result['items']), **result,
+    }), 200
+
+
+@spatial_bp.route('/compare-areas', methods=['GET'])
+def compare_areas():
+    """Union, overlap and symmetric difference of two circles."""
+    if not _spatial_supported():
+        return _unsupported()
+    circles = []
+    for tag in ('1', '2'):
+        lat = _float_arg(f'lat{tag}', -90, 90)
+        lon = _float_arg(f'lon{tag}', -180, 180)
+        radius = _float_arg(f'radius{tag}_m', 1, _MAX_RADIUS_M)
+        circles.append((lat, lon, radius))
+
+    result = spatial_queries.compare_areas(db.engine, circles[0], circles[1])
+    return jsonify({'success': True, **result}), 200
+
+
+@spatial_bp.route('/nearest-each', methods=['GET'])
+def nearest_each():
+    """For each point, the nearest place (k-NN join)."""
+    if not _spatial_supported():
+        return _unsupported()
+    points = _parse_points('points', 1, 10)
+    category = _category_arg()
+
+    items = spatial_queries.nearest_place_to_each(db.engine, points, category=category)
+    return jsonify({'success': True, 'count': len(items), 'items': items}), 200

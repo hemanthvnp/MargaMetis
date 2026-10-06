@@ -14,7 +14,7 @@ _misses = 0
 def _redis():
     global _client
     if _client is not None:
-        return _client
+        return _client or None  # False is the 'unavailable' sentinel
     try:
         import redis
         url = os.environ.get("REDIS_URL", "redis://redis:6379/0")

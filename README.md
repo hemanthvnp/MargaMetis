@@ -75,9 +75,14 @@ Falls back to rule-based extraction when no API key is set.
 # optional: add free Groq key for NL constraint extraction
 echo "GROQ_API_KEY=gsk_..." > .env
 
-docker compose up -d --build
-# → http://localhost:3030
+docker compose up --build
+# → http://localhost:3030           the app
+# → http://localhost:3030/spatial   the Spatial Explorer
 ```
+
+That single command builds and starts PostGIS, Redis, the backend and the frontend, then a one-shot `seed` container loads the Chennai road network and nearby places (hospitals, schools, ...) into the database. The first run takes a few minutes; later runs start in seconds because the data lives in a Docker volume and the seed step skips what is already there. Re-run just the seed with `docker compose run --rm seed`.
+
+If a host port is already taken, move it: `BACKEND_PORT=5055 FRONTEND_PORT=3031 docker compose up --build`. To make an account an admin (registration cannot): `docker compose exec postgres psql -U margametis -d margametis -c "UPDATE users SET role='admin' WHERE username='YOU';"`, then sign out and in.
 
 The local Compose database is PostGIS. The backend applies Alembic migrations before Gunicorn starts. A direct non-Docker development run defaults to SQLite; SQLite supports non-spatial features and continues to load/download OSMnx GraphML graphs, while PostGIS-only spatial queries and analytics are unavailable.
 

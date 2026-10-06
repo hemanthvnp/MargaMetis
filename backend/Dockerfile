@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY route_optimizer/ /app/route_optimizer/
 COPY backend/         /app/backend/
+COPY scripts/         /app/scripts/
 
 RUN mkdir -p /app/backend/graph_cache /app/backend/cache /app/logs
 

@@ -338,3 +338,50 @@ def test_corridor_buffer_scales_with_trip_length_within_bounds():
     assert corridor_buffer_m([(13.0, 80.0), (13.001, 80.0)]) == 2000.0       # tiny trip: floor
     assert 2500 < corridor_buffer_m([(13.0418, 80.2341), (13.0382, 80.1565)]) < 3500
     assert corridor_buffer_m([(13.0, 80.0), (11.0, 77.0)]) == 6000.0         # very long: cap
+
+
+def test_places_along_route_filters_by_distance_to_the_route_line_in_travel_order():
+    from route_optimizer.graph.spatial_queries import places_along_route
+
+    seen = []
+
+    class Result:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return [{
+                "osm_type": "node", "osm_id": 7, "category": "hospital", "name": "H",
+                "attrs": {}, "lat": 13.04, "lon": 80.24,
+                "distance_from_route_m": 41.26, "along_m": 1234.56,
+            }]
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def execute(self, statement, params):
+            seen.append((str(statement), params))
+            return Result()
+
+    class Engine:
+        def connect(self):
+            return Connection()
+
+    items = places_along_route(
+        Engine(), [(80.23, 13.04), (80.28, 13.05)], 500.0, category="hospital", limit=10
+    )
+
+    sql, params = seen[0]
+    assert params["wkt"] == "LINESTRING(80.23 13.04, 80.28 13.05)"
+    assert params["distance_m"] == 500.0 and params["category"] == "hospital"
+    assert "ST_Expand" in sql and "ST_DWithin" in sql   # indexed bbox, then metres
+    assert "ST_LineLocatePoint" in sql and "ORDER BY along_m" in sql
+    assert items == [{
+        "osm_type": "node", "osm_id": 7, "category": "hospital", "name": "H",
+        "attrs": {}, "lat": 13.04, "lon": 80.24,
+        "distance_from_route_m": 41.3, "along_m": 1234.6,
+    }]
