@@ -5,7 +5,6 @@ from typing import Optional, Sequence, Tuple
 from flask import current_app, has_app_context
 import osmnx as ox
 import networkx as nx
-from sqlalchemy.exc import OperationalError
 
 from ..config.models import RouteConfig
 from .spatial_store import (
@@ -94,15 +93,9 @@ class GraphManager:
             has_app_context()
             and current_app.extensions["sqlalchemy"].engine.dialect.name == "postgresql"
         ):
-            try:
-                return self._load_postgis_graph(
-                    center_point, radius_m, cache_file, route_points
-                )
-            except OperationalError as exc:
-                # Database unreachable: keep routing alive from Overpass
-                # rather than failing every request until it is back.
-                logger.error("PostGIS unavailable, falling back to OSM download: %s", exc)
-                return self._download_graph(center_point, radius_m, cache_file=None)
+            return self._load_postgis_graph(
+                center_point, radius_m, cache_file, route_points
+            )
 
         seed = self._regional_seed(center_point, radius_m)
         if seed is not None:
