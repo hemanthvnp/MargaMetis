@@ -22,4 +22,6 @@ EXPOSE 5000
 HEALTHCHECK --interval=15s --timeout=5s --retries=5 \
     CMD curl -f http://localhost:5000/api/health || exit 1
 
-CMD ["sh", "-c", "flask --app wsgi db upgrade && exec gunicorn -w 1 -b 0.0.0.0:${PORT:-5000} --timeout 300 wsgi:app"]
+# A failed migration (e.g. database unreachable) is logged but must not stop
+# gunicorn from binding, or the host never sees the service come up at all.
+CMD ["sh", "-c", "timeout 120 flask --app wsgi db upgrade || echo 'WARNING: db upgrade failed, starting anyway' >&2; exec gunicorn -w 1 -b 0.0.0.0:${PORT:-5000} --timeout 300 wsgi:app"]

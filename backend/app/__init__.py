@@ -39,7 +39,12 @@ def create_app(config_name='development'):
         # the browser reports as a CORS error). Fail it after 60 s instead.
         app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
             'pool_pre_ping': True,
-            'connect_args': {'options': '-c statement_timeout=60000'},
+            # connect_timeout: an unreachable database must fail fast rather
+            # than hang the boot-time migration and every request after it.
+            'connect_args': {
+                'options': '-c statement_timeout=60000',
+                'connect_timeout': 10,
+            },
         }
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['MIGRATIONS_DIR'] = os.path.abspath(

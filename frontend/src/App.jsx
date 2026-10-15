@@ -12,13 +12,22 @@ import './styles/globals.css';
 function App() {
   const [user, setUser]         = useState(null);
   const [showAuth, setShowAuth] = useState(false);
+  // Guarded routes must wait for /auth/me, or a reload of /user or /admin
+  // redirects home before the session is known.
+  const [authChecked, setAuthChecked] = useState(false);
 
   useEffect(() => {
     (async () => {
       const me = await authService.me();
       if (me?.logged_in) setUser({ username: me.username, role: me.role });
+      setAuthChecked(true);
     })();
   }, []);
+
+  const guard = (allowed, page) => {
+    if (!authChecked) return null;
+    return allowed ? page : <Navigate to="/" replace />;
+  };
 
   return (
     <BrowserRouter>
@@ -36,9 +45,10 @@ function App() {
             <Route path="/" element={<HomePage />} />
             <Route path="/spatial" element={<SpatialExplorer />} />
             <Route path="/admin"
-              element={user?.role === 'admin' ? <AdminDashboard /> : <Navigate to="/" replace />} />
+              element={guard(user?.role === 'admin', <AdminDashboard />)} />
             <Route path="/user"
-              element={user ? <UserDashboard /> : <Navigate to="/" replace />} />
+              element={guard(!!user, <UserDashboard />)} />
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
         <AuthModal
