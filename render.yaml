@@ -6,10 +6,10 @@ services:
     dockerContext: .
     plan: free
     envVars:
+      # Neon Postgres (PostGIS). Set the direct, non-pooled connection
+      # string in the Render dashboard; the pooler rejects startup options.
       - key: DATABASE_URL
-        fromDatabase:
-          name: margametis-db
-          property: connectionString
+        sync: false
       - key: REDIS_URL
         fromService:
           type: redis
@@ -29,7 +29,3 @@ services:
     plan: free
     ipAllowList: []
 
-databases:
-  - name: margametis-db
-    databaseName: margametis
-    plan: free
