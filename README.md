@@ -2,7 +2,26 @@
 
 Real-world road network routing on OpenStreetMap data with custom-built pathfinding algorithms, dynamic cost functions, LLM constraint extraction, and Redis caching.
 
-**Live demo** → [marga-metis.vercel.app](https://marga-metis.vercel.app)
+**Live demo** → [marga-metis.vercel.app](https://marga-metis.vercel.app) — **Chennai only**, see [Live demo coverage](#live-demo-coverage)
+
+## Live demo coverage
+
+The live demo routes **within Chennai only**. Both the origin and the destination must fall inside this area:
+
+| | South | North | West | East |
+|---|---|---|---|---|
+| Latitude / longitude | 12.952° N | 13.168° N | 80.143° E | 80.309° E (coast) |
+
+That is roughly 24 × 18 km. It includes Chennai Central, Egmore, T Nagar, Marina Beach, Mylapore, Adyar, Guindy, Velachery, Anna Nagar, Porur and the airport. Tambaram, the OMR IT corridor south of Velachery, and places outside Chennai are **not** covered: route requests there return *"Could not find a route"*. Nearby-place search (hospitals, schools, ...) covers 10 km around Chennai Central.
+
+**Why.** Production reads its road network from PostGIS, preloaded with the Chennai graph (62,676 nodes, 158,659 edges). Elsewhere the backend falls back to downloading the area from OpenStreetMap's Overpass API, but public Overpass servers block requests from cloud hosts such as Render. So any area that has not been preloaded cannot be fetched in production. The free database tier (0.5 GB, about 78 MB used today) also limits how much can be preloaded.
+
+**Not a code limit.** The routing engine works anywhere OpenStreetMap has roads:
+
+- **Locally** (`docker compose up`), Overpass is reachable, so any area downloads on first request and is cached in PostGIS.
+- **To extend production**, download the area's GraphML on a machine that can reach Overpass, then ingest it with `scripts/ingest_graphs.py --graph <file>` (see [Spatial road network](#spatial-road-network)). Each city adds roughly 30–60 MB.
+
+The backend runs on Render's free plan and sleeps when idle, so the first request after a quiet spell can take 30–60 s.
 
 ## Algorithm Benchmark
 
@@ -54,7 +73,7 @@ Each mode generates a cost function `(u, v, data) → float` based on real OSM `
 
 ### Smart route
 
-Type a natural-language description — *"scenic route avoiding busy roads"* or *"fastest route via Tambaram"* — and the backend:
+Type a natural-language description — *"scenic route avoiding busy roads"* or *"fastest route via Guindy"* — and the backend:
 
 1. Sends the query to Groq LLaMA 3 (`llama-3.1-8b-instant`) with few-shot examples
 2. Gets back structured JSON: priorities, avoid list, prefer list, waypoints, weights
@@ -129,8 +148,8 @@ The ingestion is safe to rerun: OSM node IDs and `(u, v, key)` edges use `ON CON
 | Frontend | React 18, Vite, React-Leaflet, Tailwind CSS | Vercel |
 | Backend | Flask 3, SQLAlchemy, OSMnx 2, NetworkX 3, Gunicorn | Render |
 | Cache | Redis 7 | Render Redis |
-| Database | PostGIS 16 | Render PostgreSQL |
-| Deployment | Docker Compose — 4 services | Render + Vercel |
+| Database | PostGIS 16 | Neon PostgreSQL + PostGIS |
+| Deployment | Docker Compose — 4 services | Vercel + Render + Neon |
 
 ## Tests
 
